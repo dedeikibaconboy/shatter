@@ -71,12 +71,40 @@
   function apiBase() {
     return String(window.MONMON_API || '').trim().replace(/\/$/, '');
   }
+  function apiJsonp(action, extra) {
+    return new Promise((resolve, reject) => {
+      const base = apiBase();
+      const cb = 'monmon_cb_' + Date.now() + '_' + Math.floor(Math.random()*9999);
+      const params = new URLSearchParams(Object.assign({ action, callback: cb }, extra || {}));
+      const s = document.createElement('script');
+      const timer = setTimeout(() => {
+        cleanup();
+        reject(new Error('Server tidak merespon. Deploy ulang Web App, akses Anyone.'));
+      }, 12000);
+      function cleanup() {
+        clearTimeout(timer);
+        try { delete window[cb]; } catch(e) { window[cb] = undefined; }
+        if (s.parentNode) s.parentNode.removeChild(s);
+      }
+      window[cb] = (data) => { cleanup(); resolve(data); };
+      s.onerror = () => { cleanup(); reject(new Error('Gagal menghubungi Apps Script.')); };
+      s.src = base + '?' + params.toString();
+      document.head.appendChild(s);
+    });
+  }
+
   async function apiGet(action, extra) {
     const base = apiBase();
-    if (!base) throw new Error('API kosong');
-    const params = new URLSearchParams(Object.assign({ action }, extra || {}));
-    const res = await fetch(base + '?' + params.toString(), { cache: 'no-store' });
-    return res.json();
+    if (!base) throw new Error('API kosong. Isi config.js');
+    try {
+      const params = new URLSearchParams(Object.assign({ action }, extra || {}));
+      const res = await fetch(base + '?' + params.toString(), { cache: 'no-store' });
+      const text = await res.text();
+      if (!text || text.trim().charAt(0) === '<') throw new Error('HTML');
+      return JSON.parse(text);
+    } catch (e) {
+      return apiJsonp(action, extra);
+    }
   }
   function setStats(s) {
     if (!s) return;
@@ -97,7 +125,10 @@
   }
   function getPlayerName() {
     const n = (playerNameInput.value || '').trim();
-    return n || ('Player' + Math.floor(Math.random() * 900 + 100));
+    const name = n || ('Player' + Math.floor(Math.random() * 900 + 100));
+    if (!playerNameInput.value.trim()) playerNameInput.value = name;
+    localStorage.setItem('monmon_name', name);
+    return name;
   }
 
   function startHeartbeat() {
@@ -601,16 +632,21 @@
     animationId = requestAnimationFrame(loop);
   }
 
-  function startSolo() {
+  function startSolo(resumeLevel) {
     myName = getPlayerName();
+    localStorage.setItem('monmon_name', myName);
     isMultiplayer = false; roster = [];
     if (apiBase()) apiGet('play').then(setStats).catch(()=>{});
     showScreen('game');
     myNameHud.textContent = myName;
-    score = 0; lives = settings.lives; currentLevel = 0;
+    lives = settings.lives;
+    if (!resumeLevel) {
+      score = 0;
+      currentLevel = 0;
+    }
     gameOverOverlay.classList.add('hidden');
     levelUpOverlay.classList.add('hidden');
-    resizeCanvas(); startLevel(0);
+    resizeCanvas(); startLevel(currentLevel);
     isRunning = true; isPaused = false; lastTs = 0;
     if (!animationId) animationId = requestAnimationFrame(loop);
   }
@@ -732,7 +768,7 @@
         goTitle.textContent = 'Menunggu host...';
         gameOverOverlay.classList.remove('hidden');
       }
-    } else startSolo();
+    } else startSolo(true);
   };
   backLobbyBtn.onclick = leaveAll;
   btnCopy.onclick = async () => {
@@ -748,7 +784,15 @@
     await loadData();
     const saved = localStorage.getItem('monmon_name');
     if (saved) playerNameInput.value = saved;
-    playerNameInput.addEventListener('change', () => localStorage.setItem('monmon_name', playerNameInput.value.trim()));
+    playerNameInput.addEventListener('input', () => localStorage.setItem('monmon_name', playerNameInput.value.trim()));
+    const btnReset = document.getElementById('btn-reset-data');
+    if (btnReset) btnReset.onclick = () => {
+      localStorage.removeItem('monmon_name');
+      sessionStorage.removeItem('monmon_visited');
+      playerNameInput.value = '';
+      playerNameInput.focus();
+      alert('Data lokal dihapus. Ketik nama baru lalu main.');
+    };
     if (apiBase()) {
       if (!sessionStorage.getItem('monmon_visited')) {
         sessionStorage.setItem('monmon_visited', '1');

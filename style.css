@@ -101,3 +101,15 @@ input[type="text"]:focus { border-color:var(--red); }
 @media (min-width: 900px) {
   #game-container { max-height:100dvh; border-left:2px solid var(--red); border-right:2px solid var(--red); }
 }
+
+.link-btn {
+  margin-top: 6px;
+  background: none;
+  border: none;
+  color: #888;
+  font-size: 12px;
+  text-decoration: underline;
+  cursor: pointer;
+  font-family: inherit;
+}
+.link-btn:hover { color: var(--green); }

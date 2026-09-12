@@ -38,9 +38,17 @@ function ensureSheets() {
   return { rooms, stats };
 }
 
+var JSONP_CB = '';
+
 function jsonOut(obj) {
+  const text = JSON.stringify(obj);
+  if (JSONP_CB && /^[A-Za-z0-9_]+$/.test(JSONP_CB)) {
+    return ContentService
+      .createTextOutput(JSONP_CB + '(' + text + ')')
+      .setMimeType(ContentService.MimeType.JAVASCRIPT);
+  }
   return ContentService
-    .createTextOutput(JSON.stringify(obj))
+    .createTextOutput(text)
     .setMimeType(ContentService.MimeType.JSON);
 }
 
@@ -90,6 +98,7 @@ function findRoomRow(rooms, roomId) {
 function doGet(e) {
   try {
     const p = (e && e.parameter) ? e.parameter : {};
+    JSONP_CB = String(p.callback || '');
     const action = String(p.action || 'stats');
     const { rooms, stats } = ensureSheets();
 
