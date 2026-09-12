@@ -1,6 +1,6 @@
 /**
  * Monmon Shatter Online
- * Created by Muhammad Rizki Azri Mulyana
+ * Created by Muhammad Rizky Azri Mulyana
  */
 (() => {
   const MAX_PLAYERS = 6;
@@ -203,7 +203,16 @@
     heartbeatTimer = null;
   }
 
+  function selectedMode() {
+    const el = document.querySelector('input[name="roomPlayMode"]:checked');
+    return (el && el.value === 'shared') ? 'shared' : 'race';
+  }
+
   function renderPublicRooms(list) {
+    const keep = document.activeElement;
+    const keepId = keep && keep.id;
+    const start = (keep && typeof keep.selectionStart === 'number') ? keep.selectionStart : null;
+    const end = (keep && typeof keep.selectionEnd === 'number') ? keep.selectionEnd : null;
     if (!list || !list.length) {
       publicRoomsEl.innerHTML = '<p class="muted">Belum ada room. Buat room pertama!</p>';
       return;
@@ -226,9 +235,18 @@
       btn.onclick = () => joinByRoomId(btn.dataset.id, '');
     });
     publicRoomsEl.querySelectorAll('.js-need-code').forEach(btn => {
-      roomCodeInput.value = btn.dataset.id;
-      roomCodeInput.focus();
+      btn.onclick = () => {
+        roomCodeInput.value = btn.dataset.id;
+        roomCodeInput.focus();
+      };
     });
+    if (keepId) {
+      const el = document.getElementById(keepId);
+      if (el && keepId !== 'roomCode') {
+        el.focus();
+        try { if (start != null) el.setSelectionRange(start, end); } catch (e) {}
+      }
+    }
   }
 
   async function refreshLobby() {
@@ -262,7 +280,16 @@
     } catch (e) {}
   }
   const sfxPaddle = () => playTone(220, 0.06);
-  const sfxBrick = () => playTone(480, 0.07, 'triangle', 0.08);
+  function sfxBrick(brick) {
+    const hard = Number((brick && (brick.maxHp || brick.points)) || 10);
+    if (hard >= 30) {
+      [392, 523, 659, 784].forEach((f, i) => setTimeout(() => playTone(f, 0.16, i ? 'triangle' : 'square', 0.07 + i * 0.015), i * 55));
+    } else if (hard >= 20) {
+      [440, 554, 659].forEach((f, i) => setTimeout(() => playTone(f, 0.12, 'triangle', 0.07), i * 45));
+    } else {
+      playTone(480, 0.07, 'triangle', 0.08);
+    }
+  }
   const sfxWall = () => playTone(180, 0.05, 'sine', 0.04);
   const sfxLife = () => playTone(120, 0.2, 'sawtooth', 0.08);
 
@@ -460,7 +487,7 @@
     isMultiplayer = true; isHost = true;
     roomRequiresCode = !!(requireCodeEl && requireCodeEl.checked);
     allowGuestStart = !!(allowGuestStartEl && allowGuestStartEl.checked);
-    gameMode = (document.querySelector('input[name="gameMode"]:checked') || {value:'race'}).value;
+    gameMode = (document.querySelector('input[name="roomPlayMode"]:checked') || {value:'race'}).value;
     matchStarted = false;
     roster = [{ id: myNetId, name: myName, score: 0, finished: false, host: true }];
 
@@ -506,7 +533,7 @@
           requiresCode: roomRequiresCode ? '1' : '0',
           allowGuestStart: allowGuestStart ? '1' : '0',
           customCode: custom,
-          gameMode: (document.querySelector('input[name="gameMode"]:checked') || {value:'race'}).value
+          gameMode: (document.querySelector('input[name="roomPlayMode"]:checked') || {value:'race'}).value
         });
         if (created && created.ok) {
           await finishHostRoom(created.roomId);
@@ -581,6 +608,13 @@
     p.on('error', (err) => { roomStatusEl.textContent = 'Gagal join: ' + err.type; });
   }
 
+
+  const VW = 400, VH = 640;
+  function sx(x) { return x * canvas.width / VW; }
+  function sy(y) { return y * canvas.height / VH; }
+  function sw(w) { return w * canvas.width / VW; }
+  function sh(h) { return h * canvas.height / VH; }
+
   function resizeCanvas() {
     const box = document.getElementById('game-container');
     const hud = document.getElementById('hud');
@@ -589,7 +623,6 @@
     const h = Math.max(260, (box.clientHeight || 600) - hud.offsetHeight - (IS_MOBILE ? 22 : 0));
     canvas.width = w;
     canvas.height = h;
-    paddle.y = canvas.height - 28;
   }
 
   function createBricks(levelIndex) {
@@ -597,18 +630,20 @@
     const level = gameData.levels[levelIndex];
     const pattern = level.pattern;
     const rows = pattern.length, cols = pattern[0].length;
-    const pad = settings.brickPadding;
-    const avail = canvas.width - settings.brickOffsetLeft * 2;
+    const pad = 5;
+    const left = 16;
+    const avail = VW - left * 2;
     const bw = (avail - pad * (cols - 1)) / cols;
-    const bh = IS_MOBILE ? 18 : 20;
+    const bh = 18;
+    const top = 52;
     for (let r = 0; r < rows; r++) {
       for (let c = 0; c < cols; c++) {
         const typeId = pattern[r][c];
         if (!typeId) continue;
         const type = gameData.brickTypes[String(typeId)];
         bricks.push({
-          x: settings.brickOffsetLeft + c * (bw + pad),
-          y: settings.brickOffsetTop + r * (bh + pad),
+          x: left + c * (bw + pad),
+          y: top + r * (bh + pad),
           width: bw, height: bh, color: type.color, points: type.points, hp: type.hp, maxHp: type.hp
         });
       }
@@ -616,27 +651,24 @@
   }
 
   const PADDLE_COLORS = ['#e63946','#2a9d8f','#ff9f1c','#4cc9f0','#f72585','#b8f2e6'];
-
-  function fairPaddleSpeed() {
-    return canvas.width / 48;
-  }
+  function fairPaddleSpeed() { return VW / 55; }
   function fairBallSpeed() {
     const level = gameData.levels[currentLevel] || {};
-    return (canvas.width / 70) * ((level.ballSpeed || 5.2) / 5.2);
+    return (VW / 78) * ((level.ballSpeed || 5.2) / 5.2);
   }
 
   function resetBallAndPaddle() {
-    paddle.width = Math.max(54, canvas.width * 0.2);
+    paddle.width = 78;
     paddle.height = 14;
     paddle.speed = fairPaddleSpeed();
     paddle.slow = false;
-    paddle.x = canvas.width / 2 - paddle.width / 2;
-    paddle.y = canvas.height - 28;
-    ball.radius = 8;
-    ball.x = canvas.width / 2;
+    paddle.x = VW / 2 - paddle.width / 2;
+    paddle.y = VH - 28;
+    ball.radius = 7;
+    ball.x = VW / 2;
     ball.y = paddle.y - ball.radius - 3;
     ball.speed = fairBallSpeed();
-    const angle = (Math.random() * 0.6 - 0.3) - Math.PI / 2;
+    const angle = (Math.random() * 0.5 - 0.25) - Math.PI / 2;
     ball.dx = Math.cos(angle) * ball.speed;
     ball.dy = Math.sin(angle) * ball.speed;
     if (gameMode === 'shared') initSharedPaddles(true);
@@ -645,36 +677,42 @@
   function initSharedPaddles(keepX) {
     paddles = roster.map((p, i) => {
       const old = paddles.find(x => x.id === p.id);
+      const onTop = lastHitter && lastHitter === p.id;
       return {
         id: p.id,
         name: p.name,
         color: PADDLE_COLORS[i % PADDLE_COLORS.length],
-        width: Math.max(54, canvas.width * 0.18),
+        width: 70,
         height: 12,
-        x: keepX && old ? old.x : (canvas.width / (roster.length + 1)) * (i + 1) - 30,
-        y: canvas.height - 22 - (i % 2) * 16,
+        x: keepX && old ? old.x : (VW / (roster.length + 1)) * (i + 1) - 35,
+        y: onTop ? 28 : VH - 26,
         speed: fairPaddleSpeed(),
-        slow: old ? old.slow : false
+        slow: old ? !!old.slow : false
       };
     });
   }
 
   function bouncePaddleAway(pad) {
     const leftDist = pad.x;
-    const rightDist = canvas.width - pad.x - pad.width;
-    pad.x = rightDist >= leftDist ? canvas.width - pad.width : 0;
-    paddles.forEach(p => p.slow = false);
+    const rightDist = VW - pad.x - pad.width;
+    pad.x = rightDist >= leftDist ? VW - pad.width : 0;
+    paddles.forEach(p => {
+      p.slow = false;
+      p.y = VH - 26;
+    });
     pad.slow = true;
+    pad.y = 28;
   }
 
   function broadcastWorld() {
-    if (!isHost || gameMode !== 'shared') return;
+    if (gameMode !== 'shared') return;
+    if (isMultiplayer && !isHost) return;
     sendAll({
       type: 'world',
-      ball: { x: ball.x, y: ball.y, dx: ball.dx, dy: ball.dy },
+      ball: { x: ball.x, y: ball.y, dx: ball.dx, dy: ball.dy, speed: ball.speed },
       paddles: paddles.map(p => ({ id: p.id, x: p.x, y: p.y, slow: p.slow })),
       lastHitter,
-      bricks: bricks.map(b => ({ x:b.x,y:b.y,width:b.width,height:b.height,color:b.color,hp:b.hp,points:b.points })),
+      bricks: bricks.map(b => ({ x:b.x,y:b.y,width:b.width,height:b.height,color:b.color,hp:b.hp,maxHp:b.maxHp,points:b.points })),
       roster
     });
   }
@@ -724,39 +762,52 @@
     return `#${(0x1000000 + R*0x10000 + G*0x100 + B).toString(16).slice(1)}`;
   }
 
+  function moveCpu() {
+    const cpu = paddles.find(p => p.id === 'cpu');
+    if (!cpu) return;
+    const target = ball.x - cpu.width / 2;
+    const spd = cpu.slow ? fairPaddleSpeed() / 10 : fairPaddleSpeed() * 0.85;
+    if (Math.abs(target - cpu.x) < spd) cpu.x = target;
+    else cpu.x += target > cpu.x ? spd : -spd;
+    cpu.x = Math.max(0, Math.min(VW - cpu.width, cpu.x));
+  }
+
   let worldTick = 0;
   function update(dt) {
     if (!isRunning || isPaused) return;
     const step = 1;
-    const myPad = (gameMode === 'shared') ? paddles.find(p => p.id === myNetId) : paddle;
-    const mySpeed = (myPad && myPad.slow) ? fairPaddleSpeed() * 0.5 : fairPaddleSpeed();
+    const shared = gameMode === 'shared';
+    const myPad = shared ? paddles.find(p => p.id === myNetId) : paddle;
+    const mySpeed = (myPad && myPad.slow) ? fairPaddleSpeed() / 10 : fairPaddleSpeed();
     if (myPad) {
       if (rightPressed) myPad.x += mySpeed * step;
       if (leftPressed) myPad.x -= mySpeed * step;
-      myPad.x = Math.max(0, Math.min(canvas.width - (myPad.width || paddle.width), myPad.x));
-      if (gameMode !== 'shared') paddle.x = myPad.x;
-      else if (!isHost) sendAll({ type: 'input', id: myNetId, x: myPad.x });
+      myPad.x = Math.max(0, Math.min(VW - myPad.width, myPad.x));
+      if (!shared) paddle.x = myPad.x;
+      else if (isMultiplayer && !isHost) sendAll({ type: 'input', id: myNetId, x: myPad.x });
     }
+    if (shared && paddles.some(p => p.id === 'cpu')) moveCpu();
 
-    const simulate = gameMode !== 'shared' || isHost || !isMultiplayer;
+    const simulate = !shared || !isMultiplayer || isHost;
     if (simulate) {
       ball.x += ball.dx * step;
       ball.y += ball.dy * step;
-      if (ball.x - ball.radius < 0) { ball.x = ball.radius; ball.dx = -ball.dx; sfxWall(); }
-      else if (ball.x + ball.radius > canvas.width) { ball.x = canvas.width - ball.radius; ball.dx = -ball.dx; sfxWall(); }
-      if (ball.y - ball.radius < 0) { ball.y = ball.radius; ball.dy = -ball.dy; sfxWall(); }
+      if (ball.x - ball.radius < 0) { ball.x = ball.radius; ball.dx = Math.abs(ball.dx); sfxWall(); }
+      else if (ball.x + ball.radius > VW) { ball.x = VW - ball.radius; ball.dx = -Math.abs(ball.dx); sfxWall(); }
+      if (ball.y - ball.radius < 0) { ball.y = ball.radius; ball.dy = Math.abs(ball.dy); sfxWall(); }
 
-      if (ball.y - ball.radius > canvas.height) {
-        if (gameMode === 'shared' && isMultiplayer) {
-          const victimId = lastHitter || myNetId;
-          const rp = roster.find(r => r.id === victimId);
-          if (rp) {
-            rp.lives = Math.max(0, (rp.lives || 3) - 1);
-            if (victimId === myNetId) lives = rp.lives;
-            if (rp.lives <= 0) rp.finished = true;
-          }
+      if (ball.y - ball.radius > VH) {
+        if (shared) {
+          const saved = lastHitter;
+          roster.forEach(r => {
+            if (r.id === saved) return;
+            r.lives = Math.max(0, (r.lives == null ? 3 : r.lives) - 1);
+            if (r.lives <= 0) r.finished = true;
+            if (r.id === myNetId) lives = r.lives;
+          });
           updateHUD(); sfxLife();
-          if (roster.every(r => r.finished || (r.lives || 0) <= 0)) { playerFinished(); return; }
+          const alive = roster.filter(r => !r.finished && (r.lives || 0) > 0);
+          if (alive.length <= 1) { playerFinished(); return; }
           resetBallAndPaddle();
         } else {
           lives--; updateHUD(); sfxLife();
@@ -767,9 +818,9 @@
         return;
       }
 
-      const hitList = gameMode === 'shared' && paddles.length ? paddles : [paddle];
+      const hitList = shared && paddles.length ? paddles : [paddle];
       hitList.forEach(pad => {
-        if (ball.y + ball.radius >= pad.y && ball.dy > 0 &&
+        if (ball.y + ball.radius >= pad.y && ball.y + ball.radius <= pad.y + pad.height + 10 && ball.dy > 0 &&
             ball.x >= pad.x && ball.x <= pad.x + pad.width) {
           const hitPos = (ball.x - (pad.x + pad.width/2)) / (pad.width/2);
           const angle = -Math.PI/2 + hitPos * (Math.PI/3);
@@ -778,10 +829,22 @@
           ball.dy = Math.sin(angle) * ball.speed;
           ball.y = pad.y - ball.radius - 1;
           sfxPaddle();
-          if (gameMode === 'shared') {
+          if (shared) {
             lastHitter = pad.id || myNetId;
             bouncePaddleAway(pad);
           }
+        }
+        if (shared && ball.dy < 0 && ball.y - ball.radius <= pad.y + pad.height && ball.y >= pad.y - 8 &&
+            ball.x >= pad.x && ball.x <= pad.x + pad.width) {
+          const hitPos = (ball.x - (pad.x + pad.width/2)) / (pad.width/2);
+          const angle = Math.PI/2 + hitPos * (Math.PI/3);
+          ball.speed = fairBallSpeed();
+          ball.dx = Math.cos(angle) * ball.speed;
+          ball.dy = Math.abs(Math.sin(angle) * ball.speed);
+          ball.y = pad.y + pad.height + ball.radius + 1;
+          sfxPaddle();
+          lastHitter = pad.id || myNetId;
+          bouncePaddleAway(pad);
         }
       });
 
@@ -791,13 +854,17 @@
           const prevX = ball.x - ball.dx;
           if (prevX < brick.x || prevX > brick.x + brick.width) ball.dx = -ball.dx;
           else ball.dy = -ball.dy;
-          brick.hp--; sfxBrick();
-          if (!IS_MOBILE) spawnParticles(brick.x + brick.width/2, brick.y + brick.height/2, brick.color);
+          brick.hp--; sfxBrick(brick);
+          spawnParticles(brick.x + brick.width/2, brick.y + brick.height/2, brick.color);
           if (brick.hp <= 0) {
-            const owner = (gameMode === 'shared' && lastHitter) ? lastHitter : myNetId;
-            const rp = roster.find(r => r.id === owner);
-            if (rp) rp.score += brick.points;
-            if (owner === myNetId) score += brick.points;
+            const owner = (shared && lastHitter) ? lastHitter : myNetId;
+            if (shared) {
+              const rp = roster.find(r => r.id === owner);
+              if (rp) rp.score += brick.points;
+              if (owner === myNetId) score += brick.points;
+            } else {
+              score += brick.points;
+            }
             bricks.splice(i,1);
             updateHUD();
           } else brick.color = shadeColor(brick.color, -35);
@@ -805,51 +872,42 @@
         }
       }
       if (bricks.length === 0) { levelComplete(); return; }
-      if (gameMode === 'shared' && isHost) {
+      if (shared && (!isMultiplayer || isHost)) {
         worldTick++;
-        if (worldTick % 4 === 0) broadcastWorld();
+        if (worldTick % 2 === 0) broadcastWorld();
       }
     }
     for (let i = particles.length-1; i >= 0; i--) {
-      const p = particles[i];
-      p.x += p.dx; p.y += p.dy; p.life--;
-      if (p.life <= 0) particles.splice(i,1);
+      const pt = particles[i];
+      pt.x += pt.dx; pt.y += pt.dy; pt.life--;
+      if (pt.life <= 0) particles.splice(i,1);
     }
   }
 
   function draw() {
     ctx.fillStyle = '#0c0c0c';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
-    ctx.shadowBlur = 0;
     bricks.forEach(brick => {
       ctx.fillStyle = brick.color;
-      ctx.fillRect(brick.x, brick.y, brick.width, brick.height);
+      ctx.fillRect(sx(brick.x), sy(brick.y), sw(brick.width), sh(brick.height));
     });
     if (gameMode === 'shared' && paddles.length) {
       paddles.forEach(pad => {
         ctx.fillStyle = pad.color || '#e63946';
-        ctx.fillRect(pad.x, pad.y, pad.width, pad.height);
+        ctx.fillRect(sx(pad.x), sy(pad.y), sw(pad.width), sh(pad.height));
         ctx.fillStyle = '#fff';
-        ctx.font = '10px Rajdhani';
-        ctx.fillText(pad.name || '', pad.x, pad.y - 2);
+        ctx.font = '11px Rajdhani';
+        ctx.fillText(pad.name || '', sx(pad.x), sy(pad.y) - 3);
       });
     } else {
       ctx.fillStyle = '#e63946';
-      ctx.fillRect(paddle.x, paddle.y, paddle.width, paddle.height);
+      ctx.fillRect(sx(paddle.x), sy(paddle.y), sw(paddle.width), sh(paddle.height));
     }
     ctx.fillStyle = '#2a9d8f';
-    ctx.beginPath(); ctx.arc(ball.x, ball.y, ball.radius, 0, Math.PI*2); ctx.fill();
-    if (!IS_MOBILE) {
-      particles.forEach(p => {
-        ctx.globalAlpha = p.life / p.maxLife;
-        ctx.fillStyle = p.color;
-        ctx.fillRect(p.x, p.y, p.size, p.size);
-      });
-      ctx.globalAlpha = 1;
-    }
+    ctx.beginPath(); ctx.arc(sx(ball.x), sy(ball.y), sw(ball.radius), 0, Math.PI*2); ctx.fill();
     ctx.fillStyle = 'rgba(42,157,143,.55)';
     ctx.font = '12px Rajdhani';
-    ctx.fillText('LEVEL ' + (currentLevel+1), 8, 14);
+    ctx.fillText('LEVEL ' + (currentLevel+1) + (gameMode==='shared' ? ' · SATU LAPANGAN' : ''), 8, 14);
   }
 
   let accTime = 0;
@@ -870,18 +928,27 @@
   function startSolo(resumeLevel) {
     myName = getPlayerName();
     localStorage.setItem('monmon_name', myName);
-    isMultiplayer = false; roster = [];
+    gameMode = selectedMode();
+    isMultiplayer = false;
+    lastHitter = null;
+    lives = settings.lives;
+    if (!resumeLevel) { score = 0; currentLevel = 0; }
+    if (gameMode === 'shared') {
+      roster = [
+        { id: myNetId, name: myName, score: 0, finished: false, host: true, lives: settings.lives },
+        { id: 'cpu', name: 'CPU', score: 0, finished: false, host: false, lives: settings.lives }
+      ];
+      myNameHud.textContent = myName + ' vs CPU';
+    } else {
+      roster = [];
+      myNameHud.textContent = myName;
+    }
     if (apiBase()) apiGet('play').then(setStats).catch(()=>{});
     showScreen('game');
-    myNameHud.textContent = myName;
-    lives = settings.lives;
-    if (!resumeLevel) {
-      score = 0;
-      currentLevel = 0;
-    }
     gameOverOverlay.classList.add('hidden');
     levelUpOverlay.classList.add('hidden');
-    resizeCanvas(); startLevel(currentLevel);
+    resizeCanvas();
+    startLevel(currentLevel);
     isRunning = true; isPaused = false; lastTs = 0;
     if (!animationId) animationId = requestAnimationFrame(loop);
   }
@@ -970,6 +1037,7 @@
     if (peer) try { peer.destroy(); } catch(e){}
     peer = null; hostConns = []; guestConn = null;
     isRunning = false;
+    paddles = []; lastHitter = null;
     if (animationId) cancelAnimationFrame(animationId);
     animationId = null;
     showScreen('lobby');
@@ -987,8 +1055,14 @@
   function pointerMove(clientX) {
     if (!isRunning) return;
     const rect = canvas.getBoundingClientRect();
-    paddle.x = (clientX - rect.left) * (canvas.width / rect.width) - paddle.width / 2;
-    paddle.x = Math.max(0, Math.min(canvas.width - paddle.width, paddle.x));
+    const vx = (clientX - rect.left) * (VW / rect.width);
+    const target = vx - paddle.width / 2;
+    if (gameMode === 'shared') {
+      const myPad = paddles.find(p => p.id === myNetId);
+      if (myPad) myPad.x = Math.max(0, Math.min(VW - myPad.width, target));
+    } else {
+      paddle.x = Math.max(0, Math.min(VW - paddle.width, target));
+    }
   }
   canvas.addEventListener('mousemove', e => pointerMove(e.clientX));
   canvas.addEventListener('touchmove', e => { e.preventDefault(); if (e.touches[0]) pointerMove(e.touches[0].clientX); }, {passive:false});

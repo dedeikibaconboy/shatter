@@ -1,6 +1,6 @@
 # Setting Google Sheets + Apps Script
 
-Created by Muhammad Rizki Azri Mulyana
+Created by Muhammad Rizky Azri Mulyana
 
 ## Penting setelah update ini
 Kamu sudah punya Web App. Sekarang **wajib deploy versi baru**:

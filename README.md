@@ -1,7 +1,7 @@
 # Monmon Shatter Online
 
 **Multiplayer Brick Breaker**  
-Created by **Muhammad Rizki Azri Mulyana**  
+Created by **Muhammad Rizky Azri Mulyana**  
 Brand Colors: Red • Green • Black
 
 ## Fitur

@@ -1,6 +1,6 @@
 /**
  * Monmon Shatter — Google Apps Script Backend
- * Created by Muhammad Rizki Azri Mulyana
+ * Created by Muhammad Rizky Azri Mulyana
  *
  * PENTING: setelah menempel kode baru,
  * Deploy → Manage deployments → Edit pensil → New version → Deploy
