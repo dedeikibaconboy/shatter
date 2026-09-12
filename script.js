@@ -69,6 +69,97 @@
   let myPeerId = null;
   let opponent = { name: 'Lawan', score: 0, finished: false };
   let roomCode = '';
+  let roomRequiresCode = false;
+  let heartbeatTimer = null;
+  let roomsPollTimer = null;
+  const requireCodeEl = document.getElementById('requireCode');
+  const publicRoomsEl = document.getElementById('publicRooms');
+  const apiWarnEl = document.getElementById('apiWarn');
+  const copyRow = document.getElementById('copyRow');
+  const copyCodeInput = document.getElementById('copyCodeInput');
+  const btnCopy = document.getElementById('btn-copy');
+  const roomHint = document.getElementById('roomHint');
+
+  function apiBase() {
+    return (window.MONMON_API || '').replace(/\/$/, '');
+  }
+
+  async function apiGet(action, extra) {
+    const base = apiBase();
+    if (!base) throw new Error('API belum disetting');
+    const params = new URLSearchParams(Object.assign({ action: action }, extra || {}));
+    const res = await fetch(base + '?' + params.toString());
+    return res.json();
+  }
+
+  function setStats(s) {
+    if (!s) return;
+    document.getElementById('statVisits').textContent = s.visits ?? '—';
+    document.getElementById('statPlays').textContent = s.plays ?? '—';
+    document.getElementById('statRooms').textContent = s.roomsOnline ?? '—';
+  }
+
+  function startHeartbeat() {
+    stopHeartbeat();
+    heartbeatTimer = setInterval(() => {
+      if (!roomCode || !apiBase()) return;
+      apiGet('heartbeat', {
+        roomId: roomCode,
+        status: isRunning ? 'playing' : 'waiting',
+        players: (opponent.name && opponent.name !== 'Lawan') ? 2 : 1
+      }).catch(() => {});
+    }, 8000);
+  }
+
+  function stopHeartbeat() {
+    if (heartbeatTimer) clearInterval(heartbeatTimer);
+    heartbeatTimer = null;
+  }
+
+  function renderPublicRooms(list) {
+    if (!publicRoomsEl) return;
+    if (!list || !list.length) {
+      publicRoomsEl.innerHTML = '<p class="muted">Belum ada room online. Buat room pertama!</p>';
+      return;
+    }
+    publicRoomsEl.innerHTML = list.map(r => {
+      const lock = r.requiresCode ? '🔒 Butuh kode' : '🌍 Publik';
+      const canQuick = !r.requiresCode;
+      return `<div class="room-item">
+        <div class="meta">
+          <div class="host-name">${escapeHtml(r.hostName)}</div>
+          <div class="lock">${lock} · ${escapeHtml(r.status)}</div>
+        </div>
+        ${canQuick
+          ? `<button class="btn primary js-quick-join" data-id="${escapeHtml(r.roomId)}">Join</button>`
+          : `<button class="btn secondary js-need-code" data-id="${escapeHtml(r.roomId)}">Isi Kode</button>`}
+      </div>`;
+    }).join('');
+
+    publicRoomsEl.querySelectorAll('.js-quick-join').forEach(btn => {
+      btn.addEventListener('click', () => joinByRoomId(btn.dataset.id, ''));
+    });
+    publicRoomsEl.querySelectorAll('.js-need-code').forEach(btn => {
+      document.getElementById('roomCode').value = btn.dataset.id;
+      document.getElementById('roomCode').focus();
+    });
+  }
+
+  async function refreshLobby() {
+    if (!apiBase()) {
+      apiWarnEl.classList.remove('hidden');
+      publicRoomsEl.innerHTML = '<p class="muted">Room global belum aktif.</p>';
+      return;
+    }
+    apiWarnEl.classList.add('hidden');
+    try {
+      const data = await apiGet('list');
+      setStats(data.stats);
+      renderPublicRooms(data.rooms);
+    } catch (e) {
+      publicRoomsEl.innerHTML = '<p class="muted">Gagal memuat room. Cek SETUP.md</p>';
+    }
+  }
 
   // ========== AUDIO ==========
   const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
@@ -211,13 +302,15 @@
     myName = getPlayerName();
     isMultiplayer = true;
     isHost = true;
+    roomRequiresCode = !!(requireCodeEl && requireCodeEl.checked);
     opponent = { name: 'Lawan', score: 0, finished: false };
 
     showScreen('room');
-    displayRoomCode.textContent = 'Loading...';
+    displayRoomCode.textContent = '....';
     roomStatusEl.textContent = 'Membuat room...';
     playersListEl.innerHTML = '';
     btnStartMatch.disabled = true;
+    copyRow.classList.add('hidden');
 
     if (peer) try { peer.destroy(); } catch(e){}
     peer = new Peer({
@@ -225,12 +318,41 @@
       config: { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] }
     });
 
-    peer.on('open', (id) => {
+    peer.on('open', async (id) => {
       myPeerId = id;
-      roomCode = id;
-      displayRoomCode.textContent = id.substring(0, 10) + '...';
-      roomStatusEl.innerHTML = `Salin kode ini & kirim ke teman:<br><strong style="color:#00e676;word-break:break-all;font-size:13px;user-select:all">${id}</strong>`;
       updatePlayersList();
+      if (!apiBase()) {
+        roomCode = id.slice(-6).toUpperCase();
+        displayRoomCode.textContent = roomCode;
+        roomHint.textContent = 'Server belum disetting. Teman harus join pakai Peer ID panjang.';
+        copyRow.classList.remove('hidden');
+        copyCodeInput.value = id;
+        roomStatusEl.textContent = 'Room lokal saja. Isi config.js agar terlihat dunia.';
+        return;
+      }
+      try {
+        const created = await apiGet('create', {
+          hostName: myName,
+          peerId: id,
+          requiresCode: roomRequiresCode ? '1' : '0'
+        });
+        if (!created.ok) throw new Error(created.error || 'gagal create');
+        roomCode = created.roomId;
+        displayRoomCode.textContent = roomCode;
+        if (roomRequiresCode) {
+          roomHint.textContent = 'Room privat. Bagikan kode ini ke teman.';
+          copyRow.classList.remove('hidden');
+          copyCodeInput.value = roomCode;
+        } else {
+          roomHint.textContent = 'Room publik. Pemain lain di dunia bisa lihat & join.';
+          copyRow.classList.remove('hidden');
+          copyCodeInput.value = roomCode;
+        }
+        roomStatusEl.textContent = 'Menunggu lawan...';
+        startHeartbeat();
+      } catch (err) {
+        roomStatusEl.textContent = 'Gagal daftar room: ' + err.message;
+      }
     });
 
     peer.on('connection', (connection) => {
@@ -244,23 +366,45 @@
   }
 
   function joinRoom() {
-    myName = getPlayerName();
-    const hostId = (roomCodeInput.value || '').trim();
-    if (!hostId || hostId.length < 10) {
-      alert('Tempel kode room lengkap dari host.');
+    const code = (roomCodeInput.value || '').trim().toUpperCase();
+    if (!code) {
+      alert('Isi kode room dulu.');
       return;
     }
+    joinByRoomId(code, code);
+  }
 
+  async function joinByRoomId(roomId, code) {
+    myName = getPlayerName();
     isMultiplayer = true;
     isHost = false;
-    roomCode = hostId;
     opponent = { name: 'Lawan', score: 0, finished: false };
+    roomCode = roomId;
 
     showScreen('room');
-    displayRoomCode.textContent = hostId.substring(0, 10) + '...';
+    displayRoomCode.textContent = roomId;
+    copyRow.classList.add('hidden');
+    roomHint.textContent = 'Menghubungkan ke host...';
     roomStatusEl.textContent = 'Menghubungkan...';
     updatePlayersList();
     btnStartMatch.disabled = true;
+
+    let peerId = roomId;
+    if (apiBase()) {
+      try {
+        const info = await apiGet('joininfo', { roomId: roomId, code: code || roomId });
+        if (!info.ok) {
+          roomStatusEl.textContent = info.error || 'Gagal join';
+          return;
+        }
+        peerId = info.peerId;
+        opponent.name = info.hostName || 'Lawan';
+        updatePlayersList();
+      } catch (e) {
+        roomStatusEl.textContent = 'Gagal cek room. Cek koneksi / SETUP.md';
+        return;
+      }
+    }
 
     if (peer) try { peer.destroy(); } catch(e){}
     peer = new Peer({
@@ -269,12 +413,12 @@
     });
 
     peer.on('open', () => {
-      const connection = peer.connect(hostId, { reliable: true });
+      const connection = peer.connect(peerId, { reliable: true });
       setupConnection(connection, false);
     });
 
     peer.on('error', (err) => {
-      roomStatusEl.textContent = 'Gagal join: ' + err.type + '. Cek kode & pastikan host online.';
+      roomStatusEl.textContent = 'Gagal join: ' + err.type + '. Pastikan host masih online.';
     });
   }
 
@@ -520,6 +664,7 @@
   function startSolo() {
     myName = getPlayerName();
     isMultiplayer = false;
+    if (apiBase()) apiGet('play').then(setStats).catch(() => {});
     showScreen('game');
     myNameHud.textContent = myName;
     oppNameHud.textContent = '—';
@@ -534,6 +679,7 @@
   }
 
   function startMultiplayerMatch() {
+    if (apiBase()) apiGet('play').then(setStats).catch(() => {});
     showScreen('game');
     myNameHud.textContent = myName;
     oppNameHud.textContent = opponent.name;
@@ -638,10 +784,13 @@
   });
 
   btnLeave.addEventListener('click', () => {
+    if (isHost && roomCode && apiBase()) apiGet('close', { roomId: roomCode }).catch(() => {});
+    stopHeartbeat();
     if (conn) try { conn.close(); } catch(e){}
     if (peer) try { peer.destroy(); } catch(e){}
     conn = null; peer = null;
     showScreen('lobby');
+    refreshLobby();
   });
 
   nextLevelBtn.addEventListener('click', nextLevel);
@@ -664,6 +813,8 @@
   });
 
   backLobbyBtn.addEventListener('click', () => {
+    if (isHost && roomCode && apiBase()) apiGet('close', { roomId: roomCode }).catch(() => {});
+    stopHeartbeat();
     if (conn) try { conn.close(); } catch(e){}
     if (peer) try { peer.destroy(); } catch(e){}
     conn = null; peer = null;
@@ -671,7 +822,26 @@
     if (animationId) cancelAnimationFrame(animationId);
     animationId = null;
     showScreen('lobby');
+    refreshLobby();
   });
+
+  if (btnCopy) {
+    btnCopy.addEventListener('click', async () => {
+      const val = copyCodeInput.value;
+      try {
+        await navigator.clipboard.writeText(val);
+      } catch (e) {
+        copyCodeInput.select();
+        document.execCommand('copy');
+      }
+      btnCopy.textContent = 'Tersalin!';
+      btnCopy.classList.add('copied');
+      setTimeout(() => {
+        btnCopy.textContent = 'Copy Kode';
+        btnCopy.classList.remove('copied');
+      }, 1500);
+    });
+  }
 
   window.addEventListener('resize', () => {
     if (!gameScreenEl.classList.contains('hidden')) resizeCanvas();
@@ -685,6 +855,18 @@
     playerNameInput.addEventListener('change', () => {
       localStorage.setItem('monmon_name', playerNameInput.value.trim());
     });
+
+    if (apiBase()) {
+      if (!sessionStorage.getItem('monmon_visited')) {
+        sessionStorage.setItem('monmon_visited', '1');
+        apiGet('visit').then(setStats).catch(() => {});
+      }
+      refreshLobby();
+      roomsPollTimer = setInterval(refreshLobby, 7000);
+    } else {
+      apiWarnEl.classList.remove('hidden');
+      publicRoomsEl.innerHTML = '<p class="muted">Isi config.js supaya room terlihat dunia.</p>';
+    }
   }
   init();
 })();

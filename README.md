@@ -1,46 +1,32 @@
 # Monmon Shatter Online
 
-**Multiplayer Brick Breaker**
-
-Created by **Muhammad Rizki Azri Mulyana**
-
+**Multiplayer Brick Breaker**  
+Created by **Muhammad Rizki Azri Mulyana**  
 Brand Colors: Red • Green • Black
 
-## Fitur Baru (Online Multiplayer)
+## Fitur
+- Main sendiri atau tanding online
+- Room publik terlihat dari seluruh dunia
+- Host bisa pilih: room bebas join atau wajib kode
+- Tombol Copy Kode untuk share ke teman
+- Statistik: pengunjung, sudah main, room online
+- Responsive HP dan laptop
 
-- **Main Sendiri** (Single Player)
-- **Buat Room** → dapat kode → bagikan ke teman
-- **Join Room** dengan kode
-- Nama pemain ditampilkan (seperti Roblox)
-- Score live sync (Race Mode)
-- Hasil akhir: siapa yang menang
-- Fully responsive (HP & Desktop)
+## Setup server (wajib untuk lobby dunia)
+Baca **SETUP.md**. Intinya:
+1. Buat Google Sheet
+2. Tempel `apps-script.gs` ke Apps Script
+3. Deploy Web App, akses Anyone
+4. Tempel URL ke `config.js`
 
-### Cara Main Multiplayer
-1. Host klik **Buat Room**
-2. Salin kode panjang yang muncul
-3. Kirim kode ke teman (WhatsApp / Discord / dll)
-4. Teman paste kode lalu klik **Join**
-5. Host klik **Mulai Tanding**
-6. Keduanya main level yang sama secara independen
-7. Score real-time terlihat di HUD
-8. Yang score lebih tinggi menang
+Tanpa langkah itu, game tetap bisa dimainkan sendiri.
 
-> Catatan: Menggunakan PeerJS (WebRTC P2P). Kedua pemain harus online di waktu yang sama.
-
-## Kontrol
-- Mouse / Touch : Gerakkan paddle
-- Arrow keys / A D : Gerak kiri-kanan
-
-## Deploy ke GitHub Pages
-Upload seluruh folder ini ke repository, aktifkan GitHub Pages.
-Game langsung bisa dimainkan online + multiplayer.
-
-## Tech
-- HTML + CSS + Vanilla JS
-- PeerJS (multiplayer)
+## File
+- index.html
+- style.css
+- script.js
 - levels.json
-- Web Audio API
-
----
-© 2026 Muhammad Rizki Azri Mulyana
+- config.js
+- apps-script.gs
+- SETUP.md
+- README.md
