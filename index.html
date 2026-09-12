@@ -48,6 +48,11 @@
             <input type="checkbox" id="allowGuestStart" />
             <span>Guest boleh klik Mulai</span>
           </label>
+          <div class="mode-pick">
+            <span class="mode-label">Mode room</span>
+            <label class="check-label"><input type="radio" name="gameMode" value="race" checked /> Balapan (lapangan sendiri)</label>
+            <label class="check-label"><input type="radio" name="gameMode" value="shared" /> Satu lapangan (rebut bola)</label>
+          </div>
         </div>
 
         <div class="btn-group">
@@ -127,6 +132,8 @@
       <div id="game-over" class="overlay hidden">
         <div class="overlay-content">
           <h2 id="go-title">HASIL AKHIR</h2>
+          <div id="celebration" class="celebration hidden">🏆</div>
+          <div id="podium"></div>
           <div id="final-results"></div>
           <button id="restart-btn" class="btn primary">Main Lagi</button>
           <button id="back-lobby-btn" class="btn secondary">Lobby</button>

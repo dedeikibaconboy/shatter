@@ -61,6 +61,10 @@
   let roomRequiresCode = false, allowGuestStart = false;
   let roster = [];
   let matchStarted = false;
+  let gameMode = 'race';
+  let lastHitter = null;
+  let paddles = [];
+  let waitPollFast = null;
   let heartbeatTimer = null, roomsPollTimer = null;
 
   if (requireCodeEl) {
@@ -151,14 +155,17 @@
 
   function applySheetRoster(list) {
     if (!Array.isArray(list)) return;
+    const mine = roster.find(r => r.id === myNetId);
     roster = list.map(p => ({
       id: p.id,
       name: p.name,
-      score: Number(p.score || 0),
+      score: (isRunning && p.id === myNetId && mine) ? mine.score : Number(p.score || 0),
+      lives: (isRunning && p.id === myNetId && mine && mine.lives != null) ? mine.lives : Number(p.lives != null ? p.lives : 3),
       finished: !!p.finished,
       host: !!p.host
     }));
     updatePlayersList();
+    renderLiveScores();
   }
 
   async function pollRoomState() {
@@ -167,7 +174,9 @@
       const data = await apiGet('roomstate', { roomId: roomCode });
       if (!data.ok) return;
       if (typeof data.allowGuestStart === 'boolean') allowGuestStart = data.allowGuestStart;
+      if (data.gameMode) gameMode = data.gameMode;
       applySheetRoster(data.roster);
+      refreshWaitBoard();
       if (data.status === 'playing' && !matchStarted && roster.length >= 2) {
         matchStarted = true;
         startMultiplayerMatch();
@@ -326,7 +335,20 @@
 
   function renderLiveScores() {
     if (!isMultiplayer) { liveScoresEl.textContent = ''; return; }
-    liveScoresEl.innerHTML = roster.map(p => `${escapeHtml(p.name)}:${p.score}`).join(' · ');
+    liveScoresEl.innerHTML = roster.map(p => {
+      const heart = '♥'.repeat(Math.max(0, p.lives != null ? p.lives : 0));
+      return `${escapeHtml(p.name)} ${p.score} ${heart || '✗'}`;
+    }).join('<br>');
+  }
+
+  function refreshWaitBoard() {
+    if (!gameOverOverlay || gameOverOverlay.classList.contains('hidden')) return;
+    if (!isMultiplayer) return;
+    finalResults.innerHTML = roster.map(p => {
+      const heart = '♥'.repeat(Math.max(0, Number(p.lives || 0)));
+      const mark = p.finished ? '✓' : '▶';
+      return `<p>${escapeHtml(p.name)}: <strong>${p.score}</strong> <span class="wait-lives">${heart || 'habis'}</span> ${mark}</p>`;
+    }).join('');
   }
 
   function handleNet(data, fromConn) {
@@ -351,10 +373,40 @@
         if (roster.length < 2 && !isHost) return;
         startMultiplayerMatch();
         break;
+      case 'input':
+        if (isHost && gameMode === 'shared') {
+          const pad = paddles.find(p => p.id === data.id);
+          if (pad && typeof data.x === 'number') pad.x = data.x;
+        }
+        break;
+      case 'world':
+        if (!isHost && gameMode === 'shared' && data.ball) {
+          ball.x = data.ball.x; ball.y = data.ball.y; ball.dx = data.ball.dx; ball.dy = data.ball.dy;
+          if (Array.isArray(data.paddles)) {
+            data.paddles.forEach(s => {
+              const pad = paddles.find(p => p.id === s.id);
+              if (pad && s.id !== myNetId) { pad.x = s.x; pad.y = s.y; pad.slow = s.slow; }
+            });
+          }
+          if (Array.isArray(data.bricks)) bricks = data.bricks;
+          if (Array.isArray(data.roster)) {
+            data.roster.forEach(s => {
+              const r = roster.find(p => p.id === s.id);
+              if (r && r.id !== myNetId) { r.score = s.score; r.lives = s.lives; r.finished = s.finished; }
+            });
+            renderLiveScores();
+          }
+          lastHitter = data.lastHitter;
+        }
+        break;
       case 'score': {
         const p = roster.find(x => x.id === data.id);
-        if (p) p.score = data.score;
+        if (p) {
+          p.score = data.score;
+          if (data.lives != null) p.lives = data.lives;
+        }
         renderLiveScores();
+        refreshWaitBoard();
         break;
       }
       case 'finished': {
@@ -408,6 +460,7 @@
     isMultiplayer = true; isHost = true;
     roomRequiresCode = !!(requireCodeEl && requireCodeEl.checked);
     allowGuestStart = !!(allowGuestStartEl && allowGuestStartEl.checked);
+    gameMode = (document.querySelector('input[name="gameMode"]:checked') || {value:'race'}).value;
     matchStarted = false;
     roster = [{ id: myNetId, name: myName, score: 0, finished: false, host: true }];
 
@@ -452,7 +505,8 @@
           peerId: myPeerId || '-',
           requiresCode: roomRequiresCode ? '1' : '0',
           allowGuestStart: allowGuestStart ? '1' : '0',
-          customCode: custom
+          customCode: custom,
+          gameMode: (document.querySelector('input[name="gameMode"]:checked') || {value:'race'}).value
         });
         if (created && created.ok) {
           await finishHostRoom(created.roomId);
@@ -504,6 +558,7 @@
         if (!info.ok) { roomStatusEl.textContent = info.error || 'Gagal join'; return; }
         peerId = info.peerId;
         allowGuestStart = !!info.allowGuestStart;
+        if (info.gameMode) gameMode = info.gameMode;
         roomHint.textContent = 'Masuk room ' + (info.hostName || 'host');
         const joined = await apiGet('joinplayer', {
           roomId: roomId,
@@ -560,21 +615,68 @@
     }
   }
 
+  const PADDLE_COLORS = ['#e63946','#2a9d8f','#ff9f1c','#4cc9f0','#f72585','#b8f2e6'];
+
+  function fairPaddleSpeed() {
+    return canvas.width / 48;
+  }
+  function fairBallSpeed() {
+    const level = gameData.levels[currentLevel] || {};
+    return (canvas.width / 70) * ((level.ballSpeed || 5.2) / 5.2);
+  }
+
   function resetBallAndPaddle() {
-    const scale = canvas.width / 400;
-    paddle.width = settings.paddleWidth * scale;
-    paddle.height = settings.paddleHeight;
-    paddle.speed = settings.paddleSpeed * (IS_MOBILE ? 1.15 : 1);
+    paddle.width = Math.max(54, canvas.width * 0.2);
+    paddle.height = 14;
+    paddle.speed = fairPaddleSpeed();
+    paddle.slow = false;
     paddle.x = canvas.width / 2 - paddle.width / 2;
     paddle.y = canvas.height - 28;
-    ball.radius = settings.ballRadius;
+    ball.radius = 8;
     ball.x = canvas.width / 2;
     ball.y = paddle.y - ball.radius - 3;
-    const level = gameData.levels[currentLevel];
-    ball.speed = (level.ballSpeed || settings.ballSpeed) * scale;
+    ball.speed = fairBallSpeed();
     const angle = (Math.random() * 0.6 - 0.3) - Math.PI / 2;
     ball.dx = Math.cos(angle) * ball.speed;
     ball.dy = Math.sin(angle) * ball.speed;
+    if (gameMode === 'shared') initSharedPaddles(true);
+  }
+
+  function initSharedPaddles(keepX) {
+    paddles = roster.map((p, i) => {
+      const old = paddles.find(x => x.id === p.id);
+      return {
+        id: p.id,
+        name: p.name,
+        color: PADDLE_COLORS[i % PADDLE_COLORS.length],
+        width: Math.max(54, canvas.width * 0.18),
+        height: 12,
+        x: keepX && old ? old.x : (canvas.width / (roster.length + 1)) * (i + 1) - 30,
+        y: canvas.height - 22 - (i % 2) * 16,
+        speed: fairPaddleSpeed(),
+        slow: old ? old.slow : false
+      };
+    });
+  }
+
+  function bouncePaddleAway(pad) {
+    const leftDist = pad.x;
+    const rightDist = canvas.width - pad.x - pad.width;
+    pad.x = rightDist >= leftDist ? canvas.width - pad.width : 0;
+    paddles.forEach(p => p.slow = false);
+    pad.slow = true;
+  }
+
+  function broadcastWorld() {
+    if (!isHost || gameMode !== 'shared') return;
+    sendAll({
+      type: 'world',
+      ball: { x: ball.x, y: ball.y, dx: ball.dx, dy: ball.dy },
+      paddles: paddles.map(p => ({ id: p.id, x: p.x, y: p.y, slow: p.slow })),
+      lastHitter,
+      bricks: bricks.map(b => ({ x:b.x,y:b.y,width:b.width,height:b.height,color:b.color,hp:b.hp,points:b.points })),
+      roster
+    });
   }
 
   function startLevel(idx) {
@@ -589,11 +691,14 @@
     scoreEl.textContent = score;
     livesEl.textContent = '♥ '.repeat(Math.max(0, lives)).trim() || '—';
     const me = roster.find(p => p.id === myNetId);
-    if (me) me.score = score;
+    if (me) { me.score = score; me.lives = lives; }
     renderLiveScores();
     if (isMultiplayer) {
-      sendAll({ type: 'score', id: myNetId, score });
-      if (apiBase() && roomCode) apiGet('score', { roomId: roomCode, playerId: myNetId, score: String(score) }).catch(()=>{});
+      sendAll({ type: 'score', id: myNetId, score, lives });
+      if (apiBase() && roomCode) apiGet('score', {
+        roomId: roomCode, playerId: myNetId, score: String(score),
+        lives: String(lives), finished: lives <= 0 ? '1' : '0'
+      }).catch(()=>{});
     }
   }
 
@@ -619,51 +724,92 @@
     return `#${(0x1000000 + R*0x10000 + G*0x100 + B).toString(16).slice(1)}`;
   }
 
+  let worldTick = 0;
   function update(dt) {
     if (!isRunning || isPaused) return;
-    const step = Math.min(dt, 32) / 16.67;
-    if (rightPressed) paddle.x += paddle.speed * step;
-    if (leftPressed) paddle.x -= paddle.speed * step;
-    paddle.x = Math.max(0, Math.min(canvas.width - paddle.width, paddle.x));
-    ball.x += ball.dx * step;
-    ball.y += ball.dy * step;
-
-    if (ball.x - ball.radius < 0) { ball.x = ball.radius; ball.dx = -ball.dx; sfxWall(); }
-    else if (ball.x + ball.radius > canvas.width) { ball.x = canvas.width - ball.radius; ball.dx = -ball.dx; sfxWall(); }
-    if (ball.y - ball.radius < 0) { ball.y = ball.radius; ball.dy = -ball.dy; sfxWall(); }
-
-    if (ball.y - ball.radius > canvas.height) {
-      lives--; updateHUD(); sfxLife();
-      if (lives <= 0) { playerFinished(); return; }
-      resetBallAndPaddle();
-      isPaused = true; setTimeout(() => isPaused = false, 400);
-      return;
+    const step = 1;
+    const myPad = (gameMode === 'shared') ? paddles.find(p => p.id === myNetId) : paddle;
+    const mySpeed = (myPad && myPad.slow) ? fairPaddleSpeed() * 0.5 : fairPaddleSpeed();
+    if (myPad) {
+      if (rightPressed) myPad.x += mySpeed * step;
+      if (leftPressed) myPad.x -= mySpeed * step;
+      myPad.x = Math.max(0, Math.min(canvas.width - (myPad.width || paddle.width), myPad.x));
+      if (gameMode !== 'shared') paddle.x = myPad.x;
+      else if (!isHost) sendAll({ type: 'input', id: myNetId, x: myPad.x });
     }
 
-    if (ball.y + ball.radius >= paddle.y && ball.dy > 0 &&
-        ball.x >= paddle.x && ball.x <= paddle.x + paddle.width) {
-      const hitPos = (ball.x - (paddle.x + paddle.width/2)) / (paddle.width/2);
-      const angle = -Math.PI/2 + hitPos * (Math.PI/3);
-      ball.dx = Math.cos(angle) * ball.speed;
-      ball.dy = Math.sin(angle) * ball.speed;
-      ball.y = paddle.y - ball.radius - 1;
-      sfxPaddle();
-    }
+    const simulate = gameMode !== 'shared' || isHost || !isMultiplayer;
+    if (simulate) {
+      ball.x += ball.dx * step;
+      ball.y += ball.dy * step;
+      if (ball.x - ball.radius < 0) { ball.x = ball.radius; ball.dx = -ball.dx; sfxWall(); }
+      else if (ball.x + ball.radius > canvas.width) { ball.x = canvas.width - ball.radius; ball.dx = -ball.dx; sfxWall(); }
+      if (ball.y - ball.radius < 0) { ball.y = ball.radius; ball.dy = -ball.dy; sfxWall(); }
 
-    for (let i = bricks.length-1; i >= 0; i--) {
-      const brick = bricks[i];
-      if (collideBallBrick(ball, brick)) {
-        const prevX = ball.x - ball.dx;
-        if (prevX < brick.x || prevX > brick.x + brick.width) ball.dx = -ball.dx;
-        else ball.dy = -ball.dy;
-        brick.hp--; sfxBrick();
-        if (!IS_MOBILE) spawnParticles(brick.x + brick.width/2, brick.y + brick.height/2, brick.color);
-        if (brick.hp <= 0) { score += brick.points; bricks.splice(i,1); updateHUD(); }
-        else brick.color = shadeColor(brick.color, -35);
-        break;
+      if (ball.y - ball.radius > canvas.height) {
+        if (gameMode === 'shared' && isMultiplayer) {
+          const victimId = lastHitter || myNetId;
+          const rp = roster.find(r => r.id === victimId);
+          if (rp) {
+            rp.lives = Math.max(0, (rp.lives || 3) - 1);
+            if (victimId === myNetId) lives = rp.lives;
+            if (rp.lives <= 0) rp.finished = true;
+          }
+          updateHUD(); sfxLife();
+          if (roster.every(r => r.finished || (r.lives || 0) <= 0)) { playerFinished(); return; }
+          resetBallAndPaddle();
+        } else {
+          lives--; updateHUD(); sfxLife();
+          if (lives <= 0) { playerFinished(); return; }
+          resetBallAndPaddle();
+        }
+        isPaused = true; setTimeout(() => isPaused = false, 350);
+        return;
+      }
+
+      const hitList = gameMode === 'shared' && paddles.length ? paddles : [paddle];
+      hitList.forEach(pad => {
+        if (ball.y + ball.radius >= pad.y && ball.dy > 0 &&
+            ball.x >= pad.x && ball.x <= pad.x + pad.width) {
+          const hitPos = (ball.x - (pad.x + pad.width/2)) / (pad.width/2);
+          const angle = -Math.PI/2 + hitPos * (Math.PI/3);
+          ball.speed = fairBallSpeed();
+          ball.dx = Math.cos(angle) * ball.speed;
+          ball.dy = Math.sin(angle) * ball.speed;
+          ball.y = pad.y - ball.radius - 1;
+          sfxPaddle();
+          if (gameMode === 'shared') {
+            lastHitter = pad.id || myNetId;
+            bouncePaddleAway(pad);
+          }
+        }
+      });
+
+      for (let i = bricks.length-1; i >= 0; i--) {
+        const brick = bricks[i];
+        if (collideBallBrick(ball, brick)) {
+          const prevX = ball.x - ball.dx;
+          if (prevX < brick.x || prevX > brick.x + brick.width) ball.dx = -ball.dx;
+          else ball.dy = -ball.dy;
+          brick.hp--; sfxBrick();
+          if (!IS_MOBILE) spawnParticles(brick.x + brick.width/2, brick.y + brick.height/2, brick.color);
+          if (brick.hp <= 0) {
+            const owner = (gameMode === 'shared' && lastHitter) ? lastHitter : myNetId;
+            const rp = roster.find(r => r.id === owner);
+            if (rp) rp.score += brick.points;
+            if (owner === myNetId) score += brick.points;
+            bricks.splice(i,1);
+            updateHUD();
+          } else brick.color = shadeColor(brick.color, -35);
+          break;
+        }
+      }
+      if (bricks.length === 0) { levelComplete(); return; }
+      if (gameMode === 'shared' && isHost) {
+        worldTick++;
+        if (worldTick % 4 === 0) broadcastWorld();
       }
     }
-    if (bricks.length === 0) { levelComplete(); return; }
     for (let i = particles.length-1; i >= 0; i--) {
       const p = particles[i];
       p.x += p.dx; p.y += p.dy; p.life--;
@@ -679,8 +825,18 @@
       ctx.fillStyle = brick.color;
       ctx.fillRect(brick.x, brick.y, brick.width, brick.height);
     });
-    ctx.fillStyle = '#e63946';
-    ctx.fillRect(paddle.x, paddle.y, paddle.width, paddle.height);
+    if (gameMode === 'shared' && paddles.length) {
+      paddles.forEach(pad => {
+        ctx.fillStyle = pad.color || '#e63946';
+        ctx.fillRect(pad.x, pad.y, pad.width, pad.height);
+        ctx.fillStyle = '#fff';
+        ctx.font = '10px Rajdhani';
+        ctx.fillText(pad.name || '', pad.x, pad.y - 2);
+      });
+    } else {
+      ctx.fillStyle = '#e63946';
+      ctx.fillRect(paddle.x, paddle.y, paddle.width, paddle.height);
+    }
     ctx.fillStyle = '#2a9d8f';
     ctx.beginPath(); ctx.arc(ball.x, ball.y, ball.radius, 0, Math.PI*2); ctx.fill();
     if (!IS_MOBILE) {
@@ -696,10 +852,17 @@
     ctx.fillText('LEVEL ' + (currentLevel+1), 8, 14);
   }
 
+  let accTime = 0;
   function loop(ts) {
     const dt = lastTs ? (ts - lastTs) : 16;
     lastTs = ts;
-    update(dt);
+    accTime += Math.min(dt, 50);
+    let steps = 0;
+    while (accTime >= 16.67 && steps < 5) {
+      update(16.67);
+      accTime -= 16.67;
+      steps++;
+    }
     draw();
     animationId = requestAnimationFrame(loop);
   }
@@ -732,7 +895,9 @@
     showScreen('game');
     myNameHud.textContent = roster.length ? roster.map(p => p.name).join(' vs ') : myName;
     score = 0; lives = settings.lives; currentLevel = 0;
-    roster.forEach(p => { p.score = 0; p.finished = false; });
+    lastHitter = null;
+    roster.forEach(p => { p.score = 0; p.finished = false; p.lives = settings.lives; });
+    if (gameMode === 'shared') initSharedPaddles(false);
     gameOverOverlay.classList.add('hidden');
     levelUpOverlay.classList.add('hidden');
     resizeCanvas(); startLevel(0);
@@ -767,21 +932,29 @@
     if (roster.every(p => p.finished)) endMatch();
     else {
       goTitle.textContent = 'Menunggu pemain lain...';
-      finalResults.innerHTML = roster.map(p => `<p>${escapeHtml(p.name)}: <strong>${p.score}</strong> ${p.finished?'✓':''}</p>`).join('');
       gameOverOverlay.classList.remove('hidden');
+      refreshWaitBoard();
     }
   }
   function endMatch() {
     isRunning = false;
-    goTitle.textContent = 'HASIL AKHIR';
+    goTitle.textContent = 'JUARA!';
+    const cele = document.getElementById('celebration');
+    const podium = document.getElementById('podium');
+    if (cele) { cele.classList.remove('hidden'); cele.textContent = '🏆🎉'; }
+    const medals = ['🥇','🥈','🥉'];
+    const cls = ['gold','silver','bronze'];
     if (isMultiplayer && roster.length) {
       const sorted = roster.slice().sort((a,b)=>b.score-a.score);
-      const top = sorted[0];
-      finalResults.innerHTML = `<div class="winner">${escapeHtml(top.name)} MENANG!</div>` +
-        sorted.map(p => `<p>${escapeHtml(p.name)}: <strong>${p.score}</strong></p>`).join('');
+      if (podium) podium.innerHTML = sorted.map((p,i) =>
+        `<div class="podium-row ${cls[i]||''}"><span><span class="rank">${medals[i]||(i+1)+'.'}</span>${escapeHtml(p.name)}</span><strong>${p.score}</strong></div>`
+      ).join('');
+      finalResults.innerHTML = `<div class="winner">${escapeHtml(sorted[0].name)} JUARA 1!</div>`;
     } else {
+      if (podium) podium.innerHTML = `<div class="podium-row gold"><span>🥇 ${escapeHtml(myName)}</span><strong>${score}</strong></div>`;
       finalResults.innerHTML = `<p>Score akhir: <strong>${score}</strong></p>`;
     }
+    try { [523,659,784,1046].forEach((f,i)=>setTimeout(()=>playTone(f,0.22,'triangle',0.1), i*140)); } catch(e) {}
     gameOverOverlay.classList.remove('hidden');
   }
 

@@ -128,3 +128,15 @@ input[type="text"]:focus { border-color:var(--red); }
 }
 .quit-btn:hover { border-color: var(--red); color: #fff; }
 .overlay-content .btn.secondary { margin-top: 8px; }
+
+.mode-pick { margin-top: 8px; padding-top: 8px; border-top: 1px solid #2a2a2a; }
+.mode-label { display:block; font-size:12px; color: var(--green); margin-bottom: 4px; font-weight: 700; }
+.celebration { font-size: 42px; animation: pop 0.6s ease; }
+@keyframes pop { from { transform: scale(0.4); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+.podium { margin: 8px 0 12px; }
+.podium-row { display:flex; justify-content:space-between; align-items:center; padding:8px 10px; margin: 5px 0; border-radius: 8px; background:#151515; }
+.podium-row.gold { border:1px solid #ffd700; background:#2a2308; }
+.podium-row.silver { border:1px solid #c0c0c0; }
+.podium-row.bronze { border:1px solid #cd7f32; }
+.rank { font-family: Orbitron, sans-serif; color: var(--green-bright); margin-right: 8px; }
+.wait-lives { color:#e63946; font-size: 12px; }

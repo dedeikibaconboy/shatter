@@ -18,13 +18,14 @@ function ensureSheets() {
   let rooms = ss.getSheetByName('Rooms');
   if (!rooms) {
     rooms = ss.insertSheet('Rooms');
-    rooms.getRange(1, 1, 1, 9).setValues([[
+    rooms.getRange(1, 1, 1, 10).setValues([[
       'roomId', 'hostName', 'peerId', 'requiresCode', 'status',
-      'lastSeen', 'createdAt', 'players', 'allowGuestStart'
+      'lastSeen', 'createdAt', 'players', 'allowGuestStart', 'gameMode'
     ]]);
     rooms.setFrozenRows(1);
-  } else if (String(rooms.getRange(1, 9).getValue()) !== 'allowGuestStart') {
-    rooms.getRange(1, 9).setValue('allowGuestStart');
+  } else {
+    if (String(rooms.getRange(1, 9).getValue()) !== 'allowGuestStart') rooms.getRange(1, 9).setValue('allowGuestStart');
+    if (String(rooms.getRange(1, 10).getValue()) !== 'gameMode') rooms.getRange(1, 10).setValue('gameMode');
   }
   let stats = ss.getSheetByName('Stats');
   if (!stats) {
@@ -38,11 +39,12 @@ function ensureSheets() {
   let players = ss.getSheetByName('Players');
   if (!players) {
     players = ss.insertSheet('Players');
-    players.getRange(1, 1, 1, 7).setValues([[
-      'roomId', 'playerId', 'name', 'isHost', 'score', 'finished', 'lastSeen'
+    players.getRange(1, 1, 1, 8).setValues([[
+      'roomId', 'playerId', 'name', 'isHost', 'score', 'finished', 'lastSeen', 'lives'
     ]]);
     players.setFrozenRows(1);
   }
+  if (String(players.getRange(1, 8).getValue()) !== 'lives') players.getRange(1, 8).setValue('lives');
   return { rooms, stats, players };
 }
 
@@ -81,7 +83,7 @@ function cleanCode(code) {
 function cleanupRooms(rooms) {
   const lastRow = rooms.getLastRow();
   if (lastRow < 2) return;
-  const data = rooms.getRange(2, 1, lastRow - 1, 9).getValues();
+  const data = rooms.getRange(2, 1, lastRow - 1, 10).getValues();
   const cutoff = nowMs() - ROOM_TTL_MS;
   for (let i = data.length - 1; i >= 0; i--) {
     const lastSeen = Number(data[i][5]) || 0;
@@ -133,6 +135,7 @@ function doGet(e) {
       const peerId = String(p.peerId || '').substring(0, 80);
       const requiresCode = String(p.requiresCode) === '1' || String(p.requiresCode) === 'true';
       const allowGuestStart = String(p.allowGuestStart) === '1' || String(p.allowGuestStart) === 'true';
+      const gameMode = String(p.gameMode || 'race') === 'shared' ? 'shared' : 'race';
       if (!peerId) peerId = '-';
 
       let roomId = cleanCode(p.customCode);
@@ -149,7 +152,7 @@ function doGet(e) {
 
       rooms.appendRow([
         roomId, hostName, peerId, requiresCode ? 'YES' : 'NO',
-        'waiting', String(nowMs()), nowIso(), 1, allowGuestStart ? 'YES' : 'NO'
+        'waiting', String(nowMs()), nowIso(), 1, allowGuestStart ? 'YES' : 'NO', gameMode
       ]);
 
       return jsonOut({
@@ -157,7 +160,8 @@ function doGet(e) {
         roomId: roomId,
         requiresCode: requiresCode,
         allowGuestStart: allowGuestStart,
-        hostName: hostName
+        hostName: hostName,
+        gameMode: gameMode
       });
     }
 
@@ -177,7 +181,7 @@ function doGet(e) {
       const row = findRoomRow(rooms, roomId);
       if (row === -1) return jsonOut({ ok: false, error: 'Room tidak ditemukan atau sudah tutup.' });
 
-      const vals = rooms.getRange(row, 1, 1, 9).getValues()[0];
+      const vals = rooms.getRange(row, 1, 1, 10).getValues()[0];
       const requiresCode = String(vals[3]) === 'YES';
       const players = Number(vals[7] || 1);
       if (players >= MAX_PLAYERS) {
@@ -207,7 +211,7 @@ function doGet(e) {
       const isHost = String(p.isHost) === '1';
       const row = findRoomRow(rooms, roomId);
       if (row === -1) return jsonOut({ ok: false, error: 'Room tidak ditemukan.' });
-      const vals = rooms.getRange(row, 1, 1, 9).getValues()[0];
+      const vals = rooms.getRange(row, 1, 1, 10).getValues()[0];
       const requiresCode = String(vals[3]) === 'YES';
       if (requiresCode && cleanCode(p.code) !== String(vals[0]).toUpperCase()) {
         return jsonOut({ ok: false, error: 'Kode room salah.' });
@@ -228,6 +232,7 @@ function doGet(e) {
         requiresCode: requiresCode,
         status: String(vals[4]),
         allowGuestStart: String(vals[8]) === 'YES',
+        gameMode: String(vals[9] || 'race'),
         roster: roster
       });
     }
@@ -236,7 +241,7 @@ function doGet(e) {
       const roomId = cleanCode(p.roomId);
       const row = findRoomRow(rooms, roomId);
       if (row === -1) return jsonOut({ ok: false, error: 'Room tutup.' });
-      const vals = rooms.getRange(row, 1, 1, 9).getValues()[0];
+      const vals = rooms.getRange(row, 1, 1, 10).getValues()[0];
       const roster = listPlayers(players, roomId);
       return jsonOut({
         ok: true,
@@ -245,6 +250,7 @@ function doGet(e) {
         peerId: String(vals[2]),
         status: String(vals[4]),
         allowGuestStart: String(vals[8]) === 'YES',
+        gameMode: String(vals[9] || 'race'),
         roster: roster
       });
     }
@@ -263,6 +269,7 @@ function doGet(e) {
       const playerId = String(p.playerId || '').substring(0, 24);
       updatePlayerField(players, roomId, playerId, 5, Number(p.score || 0));
       if (String(p.finished) === '1') updatePlayerField(players, roomId, playerId, 6, 'YES');
+      if (p.lives !== undefined && p.lives !== '') updatePlayerField(players, roomId, playerId, 8, Number(p.lives));
       return jsonOut({ ok: true, roster: listPlayers(players, roomId) });
     }
 
@@ -323,7 +330,7 @@ function readStats(stats, rooms) {
 function listRooms(rooms) {
   const lastRow = rooms.getLastRow();
   if (lastRow < 2) return [];
-  const data = rooms.getRange(2, 1, lastRow - 1, 9).getValues();
+  const data = rooms.getRange(2, 1, lastRow - 1, 10).getValues();
   const list = [];
   data.forEach(row => {
     const status = String(row[4] || 'waiting');
@@ -334,7 +341,8 @@ function listRooms(rooms) {
       requiresCode: String(row[3]) === 'YES',
       status: status,
       players: Number(row[7] || 1),
-      allowGuestStart: String(row[8]) === 'YES'
+      allowGuestStart: String(row[8]) === 'YES',
+      gameMode: String(row[9] || 'race')
     });
   });
   return list;
@@ -344,7 +352,7 @@ function listRooms(rooms) {
 function addOrTouchPlayer(players, roomId, playerId, name, isHost) {
   const lastRow = players.getLastRow();
   if (lastRow >= 2) {
-    const data = players.getRange(2, 1, lastRow - 1, 7).getValues();
+    const data = players.getRange(2, 1, lastRow - 1, 8).getValues();
     for (let i = 0; i < data.length; i++) {
       if (String(data[i][0]).toUpperCase() === roomId && String(data[i][1]) === playerId) {
         players.getRange(i + 2, 3).setValue(name);
@@ -353,13 +361,13 @@ function addOrTouchPlayer(players, roomId, playerId, name, isHost) {
       }
     }
   }
-  players.appendRow([roomId, playerId, name, isHost ? 'YES' : 'NO', 0, 'NO', String(nowMs())]);
+  players.appendRow([roomId, playerId, name, isHost ? 'YES' : 'NO', 0, 'NO', String(nowMs()), 3]);
 }
 
 function listPlayers(players, roomId) {
   const lastRow = players.getLastRow();
   if (lastRow < 2) return [];
-  const data = players.getRange(2, 1, lastRow - 1, 7).getValues();
+  const data = players.getRange(2, 1, lastRow - 1, 8).getValues();
   const out = [];
   data.forEach(row => {
     if (String(row[0]).toUpperCase() !== String(roomId).toUpperCase()) return;
@@ -368,7 +376,8 @@ function listPlayers(players, roomId) {
       name: String(row[2]),
       host: String(row[3]) === 'YES',
       score: Number(row[4] || 0),
-      finished: String(row[5]) === 'YES'
+      finished: String(row[5]) === 'YES',
+      lives: Number(row[7] || 3)
     });
   });
   return out;
