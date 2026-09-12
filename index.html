@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>Monmon Shatter Online — by Muhammad Rizki Azri Mulyana</title>
+  <meta name="description" content="Monmon Shatter Online Multiplayer Brick Breaker by Muhammad Rizki Azri Mulyana" />
+  <meta name="author" content="Muhammad Rizki Azri Mulyana" />
+  <link rel="stylesheet" href="style.css" />
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700;900&family=Rajdhani:wght@500;600;700&display=swap" rel="stylesheet">
+  <!-- PeerJS for multiplayer -->
+  <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+</head>
+<body>
+  <div id="app">
+    <!-- ========== LOBBY SCREEN ========== -->
+    <div id="lobby" class="screen">
+      <div class="lobby-card">
+        <div class="logo">
+          <h1>MONMON<br><span>SHATTER</span></h1>
+          <p class="tagline">Online Multiplayer Brick Breaker</p>
+        </div>
+
+        <div class="form-group">
+          <label for="playerName">Nama Kamu</label>
+          <input type="text" id="playerName" placeholder="Masukkan nama..." maxlength="16" autocomplete="off" />
+        </div>
+
+        <div class="btn-group">
+          <button id="btn-solo" class="btn secondary">Main Sendiri</button>
+          <button id="btn-create" class="btn primary">Buat Room</button>
+        </div>
+
+        <div class="divider"><span>atau</span></div>
+
+        <div class="form-group">
+          <label for="roomCode">Kode Room</label>
+          <div class="join-row">
+            <input type="text" id="roomCode" placeholder="Contoh: ABC123" maxlength="6" autocomplete="off" />
+            <button id="btn-join" class="btn primary">Join</button>
+          </div>
+        </div>
+
+        <p class="credit">Created by <strong>Muhammad Rizki Azri Mulyana</strong></p>
+      </div>
+    </div>
+
+    <!-- ========== ROOM SCREEN ========== -->
+    <div id="room" class="screen hidden">
+      <div class="lobby-card room-card">
+        <h2>Room: <span id="displayRoomCode">----</span></h2>
+        <p class="hint">Bagikan kode ini ke temanmu</p>
+
+        <div class="players-list" id="playersList">
+          <!-- filled by JS -->
+        </div>
+
+        <div class="room-status" id="roomStatus">Menunggu lawan...</div>
+
+        <div class="btn-group">
+          <button id="btn-start-match" class="btn primary" disabled>Mulai Tanding</button>
+          <button id="btn-leave" class="btn secondary">Keluar</button>
+        </div>
+
+        <p class="credit">Created by <strong>Muhammad Rizki Azri Mulyana</strong></p>
+      </div>
+    </div>
+
+    <!-- ========== GAME SCREEN ========== -->
+    <div id="game-screen" class="screen hidden">
+      <div id="game-container">
+        <!-- HUD -->
+        <header id="hud">
+          <div class="hud-item">
+            <span class="label">SCORE</span>
+            <span id="score">0</span>
+          </div>
+          <div class="hud-item center">
+            <div id="vs-info">
+              <span id="myNameHud">Kamu</span>
+              <span class="vs">VS</span>
+              <span id="oppNameHud">Lawan</span>
+            </div>
+            <div id="live-scores">
+              <span id="myLiveScore">0</span> - <span id="oppLiveScore">0</span>
+            </div>
+          </div>
+          <div class="hud-item right">
+            <span class="label">LIVES</span>
+            <span id="lives">♥ ♥ ♥</span>
+          </div>
+        </header>
+
+        <canvas id="gameCanvas"></canvas>
+
+        <!-- Mobile controls hint -->
+        <div id="mobile-hint" class="mobile-only">Geser layar untuk gerak paddle</div>
+      </div>
+
+      <!-- Overlays inside game -->
+      <div id="overlay" class="overlay hidden">
+        <div class="overlay-content">
+          <h2 id="overlay-title">MONMON SHATTER</h2>
+          <p id="overlay-message"></p>
+          <button id="start-btn" class="btn primary">MULAI</button>
+        </div>
+      </div>
+
+      <div id="level-up" class="overlay hidden">
+        <div class="overlay-content">
+          <h2>LEVEL CLEAR!</h2>
+          <p id="level-message"></p>
+          <button id="next-level-btn" class="btn primary">LANJUT</button>
+        </div>
+      </div>
+
+      <div id="game-over" class="overlay hidden">
+        <div class="overlay-content">
+          <h2 id="go-title">HASIL AKHIR</h2>
+          <div id="final-results"></div>
+          <button id="restart-btn" class="btn primary">Main Lagi</button>
+          <button id="back-lobby-btn" class="btn secondary">Kembali ke Lobby</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="script.js"></script>
+</body>
+</html>

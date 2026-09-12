@@ -1,0 +1,460 @@
+/* ================================
+   Monmon Shatter Online
+   Created by Muhammad Rizki Azri Mulyana
+   Brand Colors: Red • Green • Black
+================================ */
+
+:root {
+  --red: #e63946;
+  --red-dark: #b71c1c;
+  --green: #2a9d8f;
+  --green-bright: #00e676;
+  --black: #0a0a0a;
+  --dark: #121212;
+  --gray: #1e1e1e;
+  --white: #f1faee;
+  --glow-red: 0 0 12px rgba(230, 57, 70, 0.7);
+  --glow-green: 0 0 12px rgba(42, 157, 143, 0.7);
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+html, body {
+  height: 100%;
+  background: var(--black);
+  font-family: 'Rajdhani', sans-serif;
+  color: var(--white);
+  overflow: hidden;
+}
+
+#app {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+/* ========== SCREENS ========== */
+.screen {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  padding: 16px;
+}
+
+.screen.hidden {
+  display: none !important;
+}
+
+/* ========== LOBBY & ROOM CARD ========== */
+.lobby-card {
+  width: 100%;
+  max-width: 400px;
+  background: linear-gradient(160deg, #1a1a1a 0%, #0d0d0d 100%);
+  border: 2px solid var(--red);
+  border-radius: 16px;
+  padding: 28px 24px;
+  box-shadow: var(--glow-red);
+  text-align: center;
+}
+
+.logo h1 {
+  font-family: 'Orbitron', sans-serif;
+  font-size: 32px;
+  font-weight: 900;
+  line-height: 1.1;
+  color: var(--white);
+  letter-spacing: 2px;
+}
+
+.logo h1 span {
+  color: var(--red);
+  text-shadow: var(--glow-red);
+}
+
+.tagline {
+  font-size: 14px;
+  color: var(--green);
+  margin: 8px 0 24px;
+  letter-spacing: 1px;
+}
+
+.form-group {
+  text-align: left;
+  margin-bottom: 18px;
+}
+
+.form-group label {
+  display: block;
+  font-size: 12px;
+  letter-spacing: 1.5px;
+  color: var(--green);
+  margin-bottom: 6px;
+  font-weight: 600;
+}
+
+input[type="text"] {
+  width: 100%;
+  padding: 12px 14px;
+  background: #0a0a0a;
+  border: 1px solid #333;
+  border-radius: 8px;
+  color: var(--white);
+  font-family: 'Rajdhani', sans-serif;
+  font-size: 16px;
+  font-weight: 600;
+  outline: none;
+  transition: border-color 0.2s;
+}
+
+input[type="text"]:focus {
+  border-color: var(--red);
+}
+
+.join-row {
+  display: flex;
+  gap: 8px;
+}
+
+.join-row input {
+  flex: 1;
+  text-transform: uppercase;
+}
+
+.btn-group {
+  display: flex;
+  gap: 10px;
+  margin-top: 8px;
+}
+
+.btn {
+  font-family: 'Orbitron', sans-serif;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  padding: 13px 18px;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  text-transform: uppercase;
+  flex: 1;
+}
+
+.btn.primary {
+  background: linear-gradient(135deg, var(--red), var(--red-dark));
+  color: white;
+  box-shadow: 0 4px 15px rgba(230, 57, 70, 0.35);
+}
+
+.btn.primary:hover:not(:disabled) {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 20px rgba(230, 57, 70, 0.55);
+}
+
+.btn.primary:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.btn.secondary {
+  background: transparent;
+  color: var(--green);
+  border: 1px solid var(--green);
+}
+
+.btn.secondary:hover {
+  background: rgba(42, 157, 143, 0.15);
+}
+
+.divider {
+  display: flex;
+  align-items: center;
+  margin: 20px 0;
+  color: #555;
+  font-size: 13px;
+}
+
+.divider::before,
+.divider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: #333;
+}
+
+.divider span {
+  padding: 0 12px;
+}
+
+.credit {
+  margin-top: 22px;
+  font-size: 12px;
+  color: #666;
+}
+
+.credit strong {
+  color: var(--green);
+}
+
+/* Room specific */
+.room-card h2 {
+  font-family: 'Orbitron', sans-serif;
+  font-size: 22px;
+  color: var(--red);
+  margin-bottom: 4px;
+}
+
+.hint {
+  font-size: 13px;
+  color: #888;
+  margin-bottom: 20px;
+}
+
+.players-list {
+  background: #0a0a0a;
+  border-radius: 10px;
+  padding: 12px;
+  margin-bottom: 16px;
+  min-height: 90px;
+}
+
+.player-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 12px;
+  border-radius: 8px;
+  margin-bottom: 6px;
+  background: #151515;
+}
+
+.player-row:last-child {
+  margin-bottom: 0;
+}
+
+.player-row .name {
+  font-weight: 700;
+  font-size: 15px;
+}
+
+.player-row .badge {
+  font-size: 11px;
+  padding: 3px 8px;
+  border-radius: 20px;
+  background: var(--red);
+  color: white;
+  font-weight: 600;
+}
+
+.player-row.host .badge {
+  background: var(--green);
+}
+
+.room-status {
+  font-size: 14px;
+  color: var(--green);
+  margin-bottom: 16px;
+  min-height: 20px;
+}
+
+/* ========== GAME CONTAINER ========== */
+#game-screen {
+  padding: 0;
+  align-items: stretch;
+}
+
+#game-container {
+  position: relative;
+  width: 100%;
+  max-width: 480px;
+  height: 100%;
+  max-height: 100dvh;
+  background: var(--dark);
+  border: 3px solid var(--red);
+  box-shadow: var(--glow-red);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  margin: 0 auto;
+}
+
+/* HUD */
+#hud {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 12px;
+  background: linear-gradient(180deg, #1a1a1a 0%, #0f0f0f 100%);
+  border-bottom: 2px solid var(--red);
+  z-index: 10;
+  flex-shrink: 0;
+}
+
+.hud-item {
+  display: flex;
+  flex-direction: column;
+  min-width: 70px;
+}
+
+.hud-item.center {
+  flex: 1;
+  text-align: center;
+  align-items: center;
+}
+
+.hud-item.right {
+  text-align: right;
+  align-items: flex-end;
+}
+
+.label {
+  font-size: 10px;
+  letter-spacing: 1.5px;
+  color: var(--green);
+  font-weight: 600;
+}
+
+#score, #lives {
+  font-family: 'Orbitron', sans-serif;
+  font-size: 18px;
+  font-weight: 700;
+}
+
+#vs-info {
+  font-size: 12px;
+  font-weight: 700;
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  justify-content: center;
+}
+
+#vs-info .vs {
+  color: var(--red);
+  font-size: 11px;
+}
+
+#live-scores {
+  font-family: 'Orbitron', sans-serif;
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--green-bright);
+  margin-top: 2px;
+}
+
+#gameCanvas {
+  display: block;
+  width: 100%;
+  flex: 1;
+  background: radial-gradient(ellipse at center, #1a1a1a 0%, #0a0a0a 70%);
+  cursor: none;
+  touch-action: none;
+}
+
+.mobile-only {
+  display: none;
+  text-align: center;
+  font-size: 12px;
+  color: #555;
+  padding: 4px;
+  background: #0a0a0a;
+}
+
+/* Overlays */
+.overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.9);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  z-index: 30;
+  backdrop-filter: blur(4px);
+}
+
+.overlay.hidden {
+  display: none !important;
+}
+
+.overlay-content {
+  text-align: center;
+  padding: 28px 22px;
+  max-width: 90%;
+  border: 2px solid var(--red);
+  border-radius: 12px;
+  background: linear-gradient(145deg, #1a1a1a, #0d0d0d);
+  box-shadow: var(--glow-red);
+}
+
+.overlay-content h2 {
+  font-family: 'Orbitron', sans-serif;
+  font-size: 24px;
+  font-weight: 900;
+  color: var(--red);
+  margin-bottom: 12px;
+  text-shadow: var(--glow-red);
+}
+
+.overlay-content p {
+  font-size: 15px;
+  line-height: 1.5;
+  margin-bottom: 20px;
+  color: #ccc;
+}
+
+#final-results {
+  margin-bottom: 20px;
+  font-size: 16px;
+  line-height: 1.6;
+}
+
+#final-results .winner {
+  color: var(--green-bright);
+  font-weight: 700;
+  font-size: 18px;
+  margin-bottom: 8px;
+}
+
+/* Responsive */
+@media (max-width: 480px) {
+  .lobby-card {
+    padding: 22px 18px;
+  }
+  .logo h1 {
+    font-size: 26px;
+  }
+  #game-container {
+    border-width: 2px;
+    border-radius: 0;
+    max-height: 100dvh;
+  }
+  .mobile-only {
+    display: block;
+  }
+  #hud {
+    padding: 6px 10px;
+  }
+  #score, #lives {
+    font-size: 15px;
+  }
+  #live-scores {
+    font-size: 14px;
+  }
+}
+
+@media (min-height: 800px) and (min-width: 500px) {
+  #game-container {
+    border-radius: 12px;
+    max-height: 860px;
+  }
+}

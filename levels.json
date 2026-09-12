@@ -1,0 +1,91 @@
+{
+  "gameName": "Monmon Shatter",
+  "creator": "Muhammad Rizki Azri Mulyana",
+  "version": "1.0",
+  "settings": {
+    "paddleWidth": 90,
+    "paddleHeight": 14,
+    "ballRadius": 8,
+    "ballSpeed": 5.2,
+    "paddleSpeed": 8,
+    "lives": 3,
+    "brickRows": 6,
+    "brickCols": 8,
+    "brickPadding": 4,
+    "brickOffsetTop": 50,
+    "brickOffsetLeft": 20
+  },
+  "levels": [
+    {
+      "level": 1,
+      "name": "First Shatter",
+      "ballSpeed": 4.8,
+      "pattern": [
+        [1,1,1,1,1,1,1,1],
+        [1,1,1,1,1,1,1,1],
+        [2,2,2,2,2,2,2,2],
+        [2,2,2,2,2,2,2,2],
+        [3,3,3,3,3,3,3,3],
+        [0,0,0,0,0,0,0,0]
+      ]
+    },
+    {
+      "level": 2,
+      "name": "Green Fortress",
+      "ballSpeed": 5.3,
+      "pattern": [
+        [3,3,3,3,3,3,3,3],
+        [2,1,2,1,2,1,2,1],
+        [1,2,1,2,1,2,1,2],
+        [3,0,3,0,3,0,3,0],
+        [0,3,0,3,0,3,0,3],
+        [2,2,2,2,2,2,2,2]
+      ]
+    },
+    {
+      "level": 3,
+      "name": "Red Storm",
+      "ballSpeed": 5.8,
+      "pattern": [
+        [1,0,1,0,1,0,1,0],
+        [0,2,0,2,0,2,0,2],
+        [3,3,3,3,3,3,3,3],
+        [2,2,0,0,0,0,2,2],
+        [1,1,1,1,1,1,1,1],
+        [3,0,3,0,3,0,3,0]
+      ]
+    },
+    {
+      "level": 4,
+      "name": "Monmon Wall",
+      "ballSpeed": 6.2,
+      "pattern": [
+        [3,3,3,3,3,3,3,3],
+        [3,1,1,1,1,1,1,3],
+        [3,1,2,2,2,2,1,3],
+        [3,1,2,0,0,2,1,3],
+        [3,1,2,2,2,2,1,3],
+        [3,3,3,3,3,3,3,3]
+      ]
+    },
+    {
+      "level": 5,
+      "name": "Final Shatter",
+      "ballSpeed": 6.6,
+      "pattern": [
+        [1,2,3,2,1,2,3,2],
+        [3,1,2,3,2,1,2,3],
+        [2,3,1,2,3,2,1,2],
+        [1,2,3,1,2,3,2,1],
+        [3,1,2,3,1,2,3,1],
+        [2,3,1,2,3,1,2,3]
+      ]
+    }
+  ],
+  "brickTypes": {
+    "0": { "color": null, "points": 0, "hp": 0 },
+    "1": { "color": "#e63946", "points": 10, "hp": 1 },
+    "2": { "color": "#2a9d8f", "points": 20, "hp": 1 },
+    "3": { "color": "#ff9f1c", "points": 30, "hp": 2 }
+  }
+}
