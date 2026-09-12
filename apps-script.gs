@@ -35,7 +35,15 @@ function ensureSheets() {
       ['plays', 0]
     ]);
   }
-  return { rooms, stats };
+  let players = ss.getSheetByName('Players');
+  if (!players) {
+    players = ss.insertSheet('Players');
+    players.getRange(1, 1, 1, 7).setValues([[
+      'roomId', 'playerId', 'name', 'isHost', 'score', 'finished', 'lastSeen'
+    ]]);
+    players.setFrozenRows(1);
+  }
+  return { rooms, stats, players };
 }
 
 var JSONP_CB = '';
@@ -100,7 +108,7 @@ function doGet(e) {
     const p = (e && e.parameter) ? e.parameter : {};
     JSONP_CB = String(p.callback || '');
     const action = String(p.action || 'stats');
-    const { rooms, stats } = ensureSheets();
+    const { rooms, stats, players } = ensureSheets();
 
     if (action === 'stats') return jsonOut(Object.assign({ ok: true }, readStats(stats, rooms)));
 
@@ -125,7 +133,7 @@ function doGet(e) {
       const peerId = String(p.peerId || '').substring(0, 80);
       const requiresCode = String(p.requiresCode) === '1' || String(p.requiresCode) === 'true';
       const allowGuestStart = String(p.allowGuestStart) === '1' || String(p.allowGuestStart) === 'true';
-      if (!peerId) return jsonOut({ ok: false, error: 'peerId required' });
+      if (!peerId) peerId = '-';
 
       let roomId = cleanCode(p.customCode);
       if (roomId && roomId.length < 3) {
@@ -192,10 +200,90 @@ function doGet(e) {
       });
     }
 
+    if (action === 'joinplayer') {
+      const roomId = cleanCode(p.roomId);
+      const playerId = String(p.playerId || '').substring(0, 24);
+      const name = cleanName(p.name);
+      const isHost = String(p.isHost) === '1';
+      const row = findRoomRow(rooms, roomId);
+      if (row === -1) return jsonOut({ ok: false, error: 'Room tidak ditemukan.' });
+      const vals = rooms.getRange(row, 1, 1, 9).getValues()[0];
+      const requiresCode = String(vals[3]) === 'YES';
+      if (requiresCode && cleanCode(p.code) !== String(vals[0]).toUpperCase()) {
+        return jsonOut({ ok: false, error: 'Kode room salah.' });
+      }
+      addOrTouchPlayer(players, roomId, playerId, name, isHost);
+      const roster = listPlayers(players, roomId);
+      if (roster.length > MAX_PLAYERS) {
+        removePlayer(players, roomId, playerId);
+        return jsonOut({ ok: false, error: 'Room penuh (maksimal 6 pemain).' });
+      }
+      rooms.getRange(row, 6).setValue(String(nowMs()));
+      rooms.getRange(row, 8).setValue(roster.length);
+      return jsonOut({
+        ok: true,
+        roomId: String(vals[0]),
+        hostName: String(vals[1]),
+        peerId: String(vals[2]),
+        requiresCode: requiresCode,
+        status: String(vals[4]),
+        allowGuestStart: String(vals[8]) === 'YES',
+        roster: roster
+      });
+    }
+
+    if (action === 'roomstate') {
+      const roomId = cleanCode(p.roomId);
+      const row = findRoomRow(rooms, roomId);
+      if (row === -1) return jsonOut({ ok: false, error: 'Room tutup.' });
+      const vals = rooms.getRange(row, 1, 1, 9).getValues()[0];
+      const roster = listPlayers(players, roomId);
+      return jsonOut({
+        ok: true,
+        roomId: String(vals[0]),
+        hostName: String(vals[1]),
+        peerId: String(vals[2]),
+        status: String(vals[4]),
+        allowGuestStart: String(vals[8]) === 'YES',
+        roster: roster
+      });
+    }
+
+    if (action === 'startmatch') {
+      const roomId = cleanCode(p.roomId);
+      const row = findRoomRow(rooms, roomId);
+      if (row === -1) return jsonOut({ ok: false, error: 'Room tutup.' });
+      rooms.getRange(row, 5).setValue('playing');
+      rooms.getRange(row, 6).setValue(String(nowMs()));
+      return jsonOut({ ok: true, status: 'playing', roster: listPlayers(players, roomId) });
+    }
+
+    if (action === 'score') {
+      const roomId = cleanCode(p.roomId);
+      const playerId = String(p.playerId || '').substring(0, 24);
+      updatePlayerField(players, roomId, playerId, 5, Number(p.score || 0));
+      if (String(p.finished) === '1') updatePlayerField(players, roomId, playerId, 6, 'YES');
+      return jsonOut({ ok: true, roster: listPlayers(players, roomId) });
+    }
+
+    if (action === 'leaveplayer') {
+      const roomId = cleanCode(p.roomId);
+      const playerId = String(p.playerId || '').substring(0, 24);
+      removePlayer(players, roomId, playerId);
+      const row = findRoomRow(rooms, roomId);
+      if (row !== -1) {
+        const roster = listPlayers(players, roomId);
+        rooms.getRange(row, 8).setValue(roster.length);
+        if (String(p.isHost) === '1') rooms.deleteRow(row);
+      }
+      return jsonOut({ ok: true });
+    }
+
     if (action === 'close') {
       const roomId = cleanCode(p.roomId);
       const row = findRoomRow(rooms, roomId);
       if (row !== -1) rooms.deleteRow(row);
+      clearRoomPlayers(players, roomId);
       return jsonOut({ ok: true });
     }
 
@@ -250,4 +338,71 @@ function listRooms(rooms) {
     });
   });
   return list;
+}
+
+
+function addOrTouchPlayer(players, roomId, playerId, name, isHost) {
+  const lastRow = players.getLastRow();
+  if (lastRow >= 2) {
+    const data = players.getRange(2, 1, lastRow - 1, 7).getValues();
+    for (let i = 0; i < data.length; i++) {
+      if (String(data[i][0]).toUpperCase() === roomId && String(data[i][1]) === playerId) {
+        players.getRange(i + 2, 3).setValue(name);
+        players.getRange(i + 2, 7).setValue(String(nowMs()));
+        return;
+      }
+    }
+  }
+  players.appendRow([roomId, playerId, name, isHost ? 'YES' : 'NO', 0, 'NO', String(nowMs())]);
+}
+
+function listPlayers(players, roomId) {
+  const lastRow = players.getLastRow();
+  if (lastRow < 2) return [];
+  const data = players.getRange(2, 1, lastRow - 1, 7).getValues();
+  const out = [];
+  data.forEach(row => {
+    if (String(row[0]).toUpperCase() !== String(roomId).toUpperCase()) return;
+    out.push({
+      id: String(row[1]),
+      name: String(row[2]),
+      host: String(row[3]) === 'YES',
+      score: Number(row[4] || 0),
+      finished: String(row[5]) === 'YES'
+    });
+  });
+  return out;
+}
+
+function updatePlayerField(players, roomId, playerId, col, value) {
+  const lastRow = players.getLastRow();
+  if (lastRow < 2) return;
+  const data = players.getRange(2, 1, lastRow - 1, 2).getValues();
+  for (let i = 0; i < data.length; i++) {
+    if (String(data[i][0]).toUpperCase() === roomId && String(data[i][1]) === playerId) {
+      players.getRange(i + 2, col).setValue(value);
+      players.getRange(i + 2, 7).setValue(String(nowMs()));
+      return;
+    }
+  }
+}
+
+function removePlayer(players, roomId, playerId) {
+  const lastRow = players.getLastRow();
+  if (lastRow < 2) return;
+  const data = players.getRange(2, 1, lastRow - 1, 2).getValues();
+  for (let i = data.length - 1; i >= 0; i--) {
+    if (String(data[i][0]).toUpperCase() === roomId && String(data[i][1]) === playerId) {
+      players.deleteRow(i + 2);
+    }
+  }
+}
+
+function clearRoomPlayers(players, roomId) {
+  const lastRow = players.getLastRow();
+  if (lastRow < 2) return;
+  const data = players.getRange(2, 1, lastRow - 1, 1).getValues();
+  for (let i = data.length - 1; i >= 0; i--) {
+    if (String(data[i][0]).toUpperCase() === roomId) players.deleteRow(i + 2);
+  }
 }
