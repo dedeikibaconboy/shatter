@@ -1,21 +1,22 @@
 /**
  * Monmon Shatter Online
- * Multiplayer Brick Breaker
  * Created by Muhammad Rizki Azri Mulyana
- * Brand: Red • Green • Black
- *
- * Multiplayer: PeerJS (P2P) Race Mode
- * Both players play the same levels independently.
- * Scores sync live. Highest score wins.
  */
-
 (() => {
-  // ========== DOM ==========
+  const MAX_PLAYERS = 6;
+  const IS_MOBILE = matchMedia('(pointer:coarse)').matches || innerWidth < 700;
+
   const lobbyEl = document.getElementById('lobby');
   const roomEl = document.getElementById('room');
   const gameScreenEl = document.getElementById('game-screen');
   const playerNameInput = document.getElementById('playerName');
   const roomCodeInput = document.getElementById('roomCode');
+  const customCodeInput = document.getElementById('customCode');
+  const requireCodeEl = document.getElementById('requireCode');
+  const allowGuestStartEl = document.getElementById('allowGuestStart');
+  const customCodeWrap = document.getElementById('customCodeWrap');
+  const publicRoomsEl = document.getElementById('publicRooms');
+  const apiWarnEl = document.getElementById('apiWarn');
   const btnSolo = document.getElementById('btn-solo');
   const btnCreate = document.getElementById('btn-create');
   const btnJoin = document.getElementById('btn-join');
@@ -24,17 +25,16 @@
   const displayRoomCode = document.getElementById('displayRoomCode');
   const playersListEl = document.getElementById('playersList');
   const roomStatusEl = document.getElementById('roomStatus');
-
+  const copyRow = document.getElementById('copyRow');
+  const copyCodeInput = document.getElementById('copyCodeInput');
+  const btnCopy = document.getElementById('btn-copy');
+  const roomHint = document.getElementById('roomHint');
   const canvas = document.getElementById('gameCanvas');
-  const ctx = canvas.getContext('2d');
+  const ctx = canvas.getContext('2d', { alpha: false });
   const scoreEl = document.getElementById('score');
   const livesEl = document.getElementById('lives');
   const myNameHud = document.getElementById('myNameHud');
-  const oppNameHud = document.getElementById('oppNameHud');
-  const myLiveScore = document.getElementById('myLiveScore');
-  const oppLiveScore = document.getElementById('oppLiveScore');
-
-  const overlay = document.getElementById('overlay');
+  const liveScoresEl = document.getElementById('live-scores');
   const levelUpOverlay = document.getElementById('level-up');
   const gameOverOverlay = document.getElementById('game-over');
   const nextLevelBtn = document.getElementById('next-level-btn');
@@ -44,109 +44,111 @@
   const finalResults = document.getElementById('final-results');
   const levelMessage = document.getElementById('level-message');
 
-  // ========== STATE ==========
-  let gameData = null;
-  let settings = null;
-  let currentLevel = 0;
-  let score = 0;
-  let lives = 3;
-  let bricks = [];
+  let gameData = null, settings = null;
+  let currentLevel = 0, score = 0, lives = 3, bricks = [];
   let paddle = { x: 0, y: 0, width: 90, height: 14, speed: 8 };
   let ball = { x: 0, y: 0, radius: 8, dx: 0, dy: 0, speed: 5.2 };
-  let rightPressed = false;
-  let leftPressed = false;
-  let isRunning = false;
-  let isPaused = false;
-  let animationId = null;
+  let rightPressed = false, leftPressed = false;
+  let isRunning = false, isPaused = false, animationId = null;
   let particles = [];
+  let lastTs = 0;
 
-  // Multiplayer
   let myName = 'Player';
-  let isHost = false;
-  let isMultiplayer = false;
-  let peer = null;
-  let conn = null;
-  let myPeerId = null;
-  let opponent = { name: 'Lawan', score: 0, finished: false };
-  let roomCode = '';
-  let roomRequiresCode = false;
-  let heartbeatTimer = null;
-  let roomsPollTimer = null;
-  const requireCodeEl = document.getElementById('requireCode');
-  const publicRoomsEl = document.getElementById('publicRooms');
-  const apiWarnEl = document.getElementById('apiWarn');
-  const copyRow = document.getElementById('copyRow');
-  const copyCodeInput = document.getElementById('copyCodeInput');
-  const btnCopy = document.getElementById('btn-copy');
-  const roomHint = document.getElementById('roomHint');
+  let myNetId = Math.random().toString(36).slice(2, 8);
+  let isHost = false, isMultiplayer = false;
+  let peer = null, hostConns = [], guestConn = null;
+  let myPeerId = null, roomCode = '';
+  let roomRequiresCode = false, allowGuestStart = false;
+  let roster = [];
+  let heartbeatTimer = null, roomsPollTimer = null;
+
+  if (requireCodeEl) {
+    requireCodeEl.addEventListener('change', () => {
+      customCodeWrap.classList.toggle('hidden', !requireCodeEl.checked);
+    });
+  }
 
   function apiBase() {
-    return (window.MONMON_API || '').replace(/\/$/, '');
+    return String(window.MONMON_API || '').trim().replace(/\/$/, '');
   }
-
   async function apiGet(action, extra) {
     const base = apiBase();
-    if (!base) throw new Error('API belum disetting');
-    const params = new URLSearchParams(Object.assign({ action: action }, extra || {}));
-    const res = await fetch(base + '?' + params.toString());
+    if (!base) throw new Error('API kosong');
+    const params = new URLSearchParams(Object.assign({ action }, extra || {}));
+    const res = await fetch(base + '?' + params.toString(), { cache: 'no-store' });
     return res.json();
   }
-
   function setStats(s) {
     if (!s) return;
     document.getElementById('statVisits').textContent = s.visits ?? '—';
     document.getElementById('statPlays').textContent = s.plays ?? '—';
     document.getElementById('statRooms').textContent = s.roomsOnline ?? '—';
   }
+  function escapeHtml(t) {
+    const d = document.createElement('div'); d.textContent = t; return d.innerHTML;
+  }
+  function showScreen(name) {
+    lobbyEl.classList.add('hidden');
+    roomEl.classList.add('hidden');
+    gameScreenEl.classList.add('hidden');
+    if (name === 'lobby') lobbyEl.classList.remove('hidden');
+    if (name === 'room') roomEl.classList.remove('hidden');
+    if (name === 'game') gameScreenEl.classList.remove('hidden');
+  }
+  function getPlayerName() {
+    const n = (playerNameInput.value || '').trim();
+    return n || ('Player' + Math.floor(Math.random() * 900 + 100));
+  }
 
   function startHeartbeat() {
     stopHeartbeat();
-    heartbeatTimer = setInterval(() => {
+    const beat = () => {
       if (!roomCode || !apiBase()) return;
       apiGet('heartbeat', {
         roomId: roomCode,
         status: isRunning ? 'playing' : 'waiting',
-        players: (opponent.name && opponent.name !== 'Lawan') ? 2 : 1
+        players: Math.max(1, roster.length)
       }).catch(() => {});
-    }, 8000);
+    };
+    beat();
+    heartbeatTimer = setInterval(beat, 4000);
   }
-
   function stopHeartbeat() {
     if (heartbeatTimer) clearInterval(heartbeatTimer);
     heartbeatTimer = null;
   }
 
   function renderPublicRooms(list) {
-    if (!publicRoomsEl) return;
     if (!list || !list.length) {
-      publicRoomsEl.innerHTML = '<p class="muted">Belum ada room online. Buat room pertama!</p>';
+      publicRoomsEl.innerHTML = '<p class="muted">Belum ada room. Buat room pertama!</p>';
       return;
     }
     publicRoomsEl.innerHTML = list.map(r => {
-      const lock = r.requiresCode ? '🔒 Butuh kode' : '🌍 Publik';
-      const canQuick = !r.requiresCode;
+      const full = (r.players || 1) >= MAX_PLAYERS;
+      const lock = r.requiresCode ? 'Butuh kode' : 'Publik';
+      const btn = full
+        ? `<button class="btn secondary" disabled>Penuh</button>`
+        : r.requiresCode
+          ? `<button class="btn secondary js-need-code" data-id="${escapeHtml(r.roomId)}">Kode</button>`
+          : `<button class="btn primary js-quick-join" data-id="${escapeHtml(r.roomId)}">Join</button>`;
       return `<div class="room-item">
         <div class="meta">
           <div class="host-name">${escapeHtml(r.hostName)}</div>
-          <div class="lock">${lock} · ${escapeHtml(r.status)}</div>
-        </div>
-        ${canQuick
-          ? `<button class="btn primary js-quick-join" data-id="${escapeHtml(r.roomId)}">Join</button>`
-          : `<button class="btn secondary js-need-code" data-id="${escapeHtml(r.roomId)}">Isi Kode</button>`}
-      </div>`;
+          <div class="lock">${lock} · ${r.players || 1}/${MAX_PLAYERS} · ${escapeHtml(r.status)}</div>
+        </div>${btn}</div>`;
     }).join('');
-
     publicRoomsEl.querySelectorAll('.js-quick-join').forEach(btn => {
-      btn.addEventListener('click', () => joinByRoomId(btn.dataset.id, ''));
+      btn.onclick = () => joinByRoomId(btn.dataset.id, '');
     });
     publicRoomsEl.querySelectorAll('.js-need-code').forEach(btn => {
-      document.getElementById('roomCode').value = btn.dataset.id;
-      document.getElementById('roomCode').focus();
+      roomCodeInput.value = btn.dataset.id;
+      roomCodeInput.focus();
     });
   }
 
   async function refreshLobby() {
     if (!apiBase()) {
+      apiWarnEl.textContent = 'Server belum disetting. Isi URL di config.js (SETUP.md).';
       apiWarnEl.classList.remove('hidden');
       publicRoomsEl.innerHTML = '<p class="muted">Room global belum aktif.</p>';
       return;
@@ -157,307 +159,265 @@
       setStats(data.stats);
       renderPublicRooms(data.rooms);
     } catch (e) {
-      publicRoomsEl.innerHTML = '<p class="muted">Gagal memuat room. Cek SETUP.md</p>';
+      publicRoomsEl.innerHTML = '<p class="muted">Gagal memuat room. Deploy ulang Apps Script versi baru.</p>';
     }
   }
 
-  // ========== AUDIO ==========
   const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-  function playTone(freq, duration, type = 'square', volume = 0.08) {
+  function playTone(freq, duration, type = 'square', volume = 0.07) {
     if (audioCtx.state === 'suspended') audioCtx.resume();
     try {
       const osc = audioCtx.createOscillator();
       const gain = audioCtx.createGain();
-      osc.type = type;
-      osc.frequency.value = freq;
+      osc.type = type; osc.frequency.value = freq;
       gain.gain.setValueAtTime(volume, audioCtx.currentTime);
       gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + duration);
-      osc.connect(gain);
-      gain.connect(audioCtx.destination);
-      osc.start();
-      osc.stop(audioCtx.currentTime + duration);
+      osc.connect(gain); gain.connect(audioCtx.destination);
+      osc.start(); osc.stop(audioCtx.currentTime + duration);
     } catch (e) {}
   }
-  function sfxPaddle() { playTone(220, 0.08, 'square', 0.06); }
-  function sfxBrick()  { playTone(440 + Math.random()*200, 0.1, 'triangle', 0.09); }
-  function sfxWall()   { playTone(180, 0.07, 'sine', 0.05); }
-  function sfxLife()   { playTone(120, 0.3, 'sawtooth', 0.1); }
-  function sfxWin()    { [523,659,784].forEach((f,i)=>setTimeout(()=>playTone(f,0.2,'triangle',0.1), i*120)); }
-  function sfxLose()   { playTone(90, 0.5, 'sawtooth', 0.12); }
+  const sfxPaddle = () => playTone(220, 0.06);
+  const sfxBrick = () => playTone(480, 0.07, 'triangle', 0.08);
+  const sfxWall = () => playTone(180, 0.05, 'sine', 0.04);
+  const sfxLife = () => playTone(120, 0.2, 'sawtooth', 0.08);
 
-  // ========== LOAD ==========
   async function loadData() {
     try {
       const res = await fetch('levels.json');
       gameData = await res.json();
       settings = gameData.settings;
     } catch (e) {
-      gameData = {
-        levels: [{ level: 1, name: "Fallback", ballSpeed: 5,
-          pattern: [[1,1,1,1,1,1,1,1],[2,2,2,2,2,2,2,2],[3,3,3,3,3,3,3,3]] }],
-        brickTypes: {
-          "0": {color:null,points:0,hp:0},
-          "1": {color:"#e63946",points:10,hp:1},
-          "2": {color:"#2a9d8f",points:20,hp:1},
-          "3": {color:"#ff9f1c",points:30,hp:2}
-        }
-      };
-      settings = { paddleWidth:90, paddleHeight:14, ballRadius:8, ballSpeed:5.2, paddleSpeed:8, lives:3,
-        brickRows:6, brickCols:8, brickPadding:4, brickOffsetTop:50, brickOffsetLeft:20 };
+      gameData = { levels: [{ level:1, name:'A', ballSpeed:5, pattern:[[1,1,1,1,1,1,1,1],[2,2,2,2,2,2,2,2],[3,3,3,3,3,3,3,3]] }],
+        brickTypes: { "0":{color:null,points:0,hp:0}, "1":{color:"#e63946",points:10,hp:1}, "2":{color:"#2a9d8f",points:20,hp:1}, "3":{color:"#ff9f1c",points:30,hp:2} } };
+      settings = { paddleWidth:90, paddleHeight:14, ballRadius:8, ballSpeed:5.2, paddleSpeed:8, lives:3, brickPadding:4, brickOffsetTop:46, brickOffsetLeft:16 };
     }
   }
 
-  // ========== SCREENS ==========
-  function showScreen(name) {
-    lobbyEl.classList.add('hidden');
-    roomEl.classList.add('hidden');
-    gameScreenEl.classList.add('hidden');
-    if (name === 'lobby') lobbyEl.classList.remove('hidden');
-    if (name === 'room') roomEl.classList.remove('hidden');
-    if (name === 'game') gameScreenEl.classList.remove('hidden');
+  function sendAll(data) {
+    if (isHost) hostConns.forEach(c => { if (c.open) try { c.send(data); } catch(e){} });
+    else if (guestConn && guestConn.open) try { guestConn.send(data); } catch(e){}
   }
-
-  function getPlayerName() {
-    const n = (playerNameInput.value || '').trim();
-    return n || ('Player' + Math.floor(Math.random() * 900 + 100));
-  }
-
-  function escapeHtml(t) {
-    const d = document.createElement('div');
-    d.textContent = t;
-    return d.innerHTML;
-  }
-
-  // ========== PEERJS ==========
-  function setupConnection(connection, asHost) {
-    conn = connection;
-    isHost = asHost;
-
-    conn.on('open', () => {
-      roomStatusEl.textContent = 'Terhubung dengan lawan!';
-      if (isHost) send({ type: 'hello', name: myName });
-      updatePlayersList();
-      btnStartMatch.disabled = !isHost ? true : false;
-      if (!isHost) btnStartMatch.disabled = true; // only host can start
-    });
-
-    conn.on('data', (data) => handleNetworkMessage(data));
-
-    conn.on('close', () => {
-      roomStatusEl.textContent = 'Lawan terputus.';
-      opponent = { name: 'Lawan', score: 0, finished: false };
-      updatePlayersList();
-      btnStartMatch.disabled = true;
-      if (isRunning) endMatch('Lawan keluar dari permainan.');
+  function relayFromGuest(data, fromConn) {
+    if (!isHost) return;
+    hostConns.forEach(c => {
+      if (c !== fromConn && c.open) try { c.send(data); } catch(e){}
     });
   }
 
-  function send(data) {
-    if (conn && conn.open) {
-      try { conn.send(data); } catch (e) {}
-    }
-  }
-
-  function handleNetworkMessage(data) {
-    switch (data.type) {
-      case 'hello':
-        opponent.name = data.name || 'Lawan';
-        if (!isHost) send({ type: 'hello', name: myName });
-        updatePlayersList();
-        roomStatusEl.textContent = 'Siap tanding! (Host yang mulai)';
-        if (isHost) btnStartMatch.disabled = false;
-        break;
-      case 'start':
-        if (!isHost) startMultiplayerMatch();
-        break;
-      case 'score':
-        opponent.score = data.score || 0;
-        oppLiveScore.textContent = opponent.score;
-        break;
-      case 'finished':
-        opponent.finished = true;
-        opponent.score = data.score || opponent.score;
-        checkBothFinished();
-        break;
-    }
+  function upsertPlayer(id, name) {
+    let p = roster.find(x => x.id === id);
+    if (!p) {
+      if (roster.length >= MAX_PLAYERS) return null;
+      p = { id, name, score: 0, finished: false, host: false };
+      roster.push(p);
+    } else if (name) p.name = name;
+    return p;
   }
 
   function updatePlayersList() {
-    let html = `<div class="player-row host">
-      <span class="name">${escapeHtml(myName)} (Kamu)</span>
-      <span class="badge">${isHost ? 'HOST' : 'GUEST'}</span>
-    </div>`;
-    if (opponent.name && opponent.name !== 'Lawan') {
-      html += `<div class="player-row">
-        <span class="name">${escapeHtml(opponent.name)}</span>
-        <span class="badge">JOINED</span>
-      </div>`;
-    } else {
-      html += `<div class="player-row" style="opacity:0.5"><span class="name">Menunggu lawan...</span></div>`;
+    playersListEl.innerHTML = roster.map(p => {
+      const you = p.id === myNetId ? ' (Kamu)' : '';
+      const cls = p.host ? 'player-row host' : 'player-row';
+      const badge = p.host ? 'HOST' : 'GUEST';
+      return `<div class="${cls}"><span class="name">${escapeHtml(p.name)}${you}</span><span class="badge">${badge}</span></div>`;
+    }).join('') || '<p class="muted">Menunggu pemain...</p>';
+    const guests = roster.filter(p => !p.host).length;
+    const canStart = guests >= 1 && (isHost || allowGuestStart);
+    btnStartMatch.disabled = !canStart;
+    roomStatusEl.textContent = guests ? `${roster.length}/${MAX_PLAYERS} pemain. Siap mulai.` : 'Menunggu pemain join...';
+    renderLiveScores();
+  }
+
+  function renderLiveScores() {
+    if (!isMultiplayer) { liveScoresEl.textContent = ''; return; }
+    liveScoresEl.innerHTML = roster.map(p => `${escapeHtml(p.name)}:${p.score}`).join(' · ');
+  }
+
+  function handleNet(data, fromConn) {
+    if (!data || !data.type) return;
+    if (isHost && fromConn && data.type !== 'hello') relayFromGuest(data, fromConn);
+    switch (data.type) {
+      case 'hello':
+        upsertPlayer(data.id, data.name);
+        if (isHost) {
+          sendAll({ type: 'roster', roster, allowGuestStart });
+          updatePlayersList();
+          startHeartbeat();
+        }
+        break;
+      case 'roster':
+        roster = data.roster || roster;
+        if (typeof data.allowGuestStart === 'boolean') allowGuestStart = data.allowGuestStart;
+        updatePlayersList();
+        break;
+      case 'start':
+        startMultiplayerMatch();
+        break;
+      case 'score': {
+        const p = roster.find(x => x.id === data.id);
+        if (p) p.score = data.score;
+        renderLiveScores();
+        break;
+      }
+      case 'finished': {
+        const p = roster.find(x => x.id === data.id);
+        if (p) { p.finished = true; p.score = data.score; }
+        checkAllFinished();
+        break;
+      }
     }
-    playersListEl.innerHTML = html;
+  }
+
+  function bindConn(connection, asHostSide) {
+    connection.on('open', () => {
+      if (asHostSide) {
+        hostConns.push(connection);
+        sendAll({ type: 'roster', roster, allowGuestStart });
+      } else {
+        guestConn = connection;
+        sendAll({ type: 'hello', id: myNetId, name: myName });
+      }
+    });
+    connection.on('data', (d) => handleNet(d, connection));
+    connection.on('close', () => {
+      hostConns = hostConns.filter(c => c !== connection);
+      if (connection === guestConn) {
+        roomStatusEl.textContent = 'Terputus dari host.';
+      }
+    });
+  }
+
+  function makePeer() {
+    if (peer) try { peer.destroy(); } catch(e){}
+    hostConns = []; guestConn = null;
+    peer = new Peer({ debug: 0, config: { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] } });
+    return peer;
   }
 
   function createRoom() {
     myName = getPlayerName();
-    isMultiplayer = true;
-    isHost = true;
+    isMultiplayer = true; isHost = true;
     roomRequiresCode = !!(requireCodeEl && requireCodeEl.checked);
-    opponent = { name: 'Lawan', score: 0, finished: false };
+    allowGuestStart = !!(allowGuestStartEl && allowGuestStartEl.checked);
+    roster = [{ id: myNetId, name: myName, score: 0, finished: false, host: true }];
 
     showScreen('room');
-    displayRoomCode.textContent = '....';
-    roomStatusEl.textContent = 'Membuat room...';
-    playersListEl.innerHTML = '';
+    displayRoomCode.textContent = '...';
+    roomStatusEl.textContent = 'Menyiapkan koneksi...';
     btnStartMatch.disabled = true;
-    copyRow.classList.add('hidden');
+    updatePlayersList();
 
-    if (peer) try { peer.destroy(); } catch(e){}
-    peer = new Peer({
-      debug: 0,
-      config: { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] }
-    });
+    const custom = roomRequiresCode ? (customCodeInput.value || '').trim().toUpperCase() : '';
+    if (custom) {
+      displayRoomCode.textContent = custom;
+      copyCodeInput.value = custom;
+    }
 
-    peer.on('open', async (id) => {
+    const p = makePeer();
+    p.on('open', async (id) => {
       myPeerId = id;
-      updatePlayersList();
       if (!apiBase()) {
-        roomCode = id.slice(-6).toUpperCase();
+        roomCode = custom || id.slice(-6).toUpperCase();
         displayRoomCode.textContent = roomCode;
-        roomHint.textContent = 'Server belum disetting. Teman harus join pakai Peer ID panjang.';
-        copyRow.classList.remove('hidden');
-        copyCodeInput.value = id;
-        roomStatusEl.textContent = 'Room lokal saja. Isi config.js agar terlihat dunia.';
+        copyCodeInput.value = roomCode;
+        roomHint.textContent = 'Server belum siap. Deploy Apps Script dulu.';
         return;
       }
       try {
         const created = await apiGet('create', {
           hostName: myName,
           peerId: id,
-          requiresCode: roomRequiresCode ? '1' : '0'
+          requiresCode: roomRequiresCode ? '1' : '0',
+          allowGuestStart: allowGuestStart ? '1' : '0',
+          customCode: custom
         });
-        if (!created.ok) throw new Error(created.error || 'gagal create');
+        if (!created.ok) throw new Error(created.error || 'gagal');
         roomCode = created.roomId;
         displayRoomCode.textContent = roomCode;
-        if (roomRequiresCode) {
-          roomHint.textContent = 'Room privat. Bagikan kode ini ke teman.';
-          copyRow.classList.remove('hidden');
-          copyCodeInput.value = roomCode;
-        } else {
-          roomHint.textContent = 'Room publik. Pemain lain di dunia bisa lihat & join.';
-          copyRow.classList.remove('hidden');
-          copyCodeInput.value = roomCode;
-        }
-        roomStatusEl.textContent = 'Menunggu lawan...';
+        copyCodeInput.value = roomCode;
+        roomHint.textContent = roomRequiresCode
+          ? 'Room privat. Copy kode lalu kirim ke teman.'
+          : 'Room publik. Laptop lain akan melihat room ini.';
         startHeartbeat();
+        refreshLobby();
       } catch (err) {
         roomStatusEl.textContent = 'Gagal daftar room: ' + err.message;
       }
     });
-
-    peer.on('connection', (connection) => {
-      if (conn && conn.open) { connection.close(); return; }
-      setupConnection(connection, true);
+    p.on('connection', (c) => {
+      if (roster.length >= MAX_PLAYERS) { c.close(); return; }
+      bindConn(c, true);
     });
-
-    peer.on('error', (err) => {
-      roomStatusEl.textContent = 'Error: ' + err.type;
-    });
+    p.on('error', (err) => { roomStatusEl.textContent = 'Error: ' + err.type; });
   }
 
   function joinRoom() {
     const code = (roomCodeInput.value || '').trim().toUpperCase();
-    if (!code) {
-      alert('Isi kode room dulu.');
-      return;
-    }
+    if (!code) { alert('Isi kode room.'); return; }
     joinByRoomId(code, code);
   }
 
   async function joinByRoomId(roomId, code) {
     myName = getPlayerName();
-    isMultiplayer = true;
-    isHost = false;
-    opponent = { name: 'Lawan', score: 0, finished: false };
+    isMultiplayer = true; isHost = false;
+    roster = [];
     roomCode = roomId;
-
     showScreen('room');
     displayRoomCode.textContent = roomId;
-    copyRow.classList.add('hidden');
-    roomHint.textContent = 'Menghubungkan ke host...';
-    roomStatusEl.textContent = 'Menghubungkan...';
-    updatePlayersList();
+    copyCodeInput.value = roomId;
+    roomHint.textContent = 'Menghubungkan...';
+    roomStatusEl.textContent = 'Menghubungkan ke host...';
     btnStartMatch.disabled = true;
 
     let peerId = roomId;
     if (apiBase()) {
       try {
-        const info = await apiGet('joininfo', { roomId: roomId, code: code || roomId });
-        if (!info.ok) {
-          roomStatusEl.textContent = info.error || 'Gagal join';
-          return;
-        }
+        const info = await apiGet('joininfo', { roomId, code: code || roomId });
+        if (!info.ok) { roomStatusEl.textContent = info.error || 'Gagal join'; return; }
         peerId = info.peerId;
-        opponent.name = info.hostName || 'Lawan';
+        allowGuestStart = !!info.allowGuestStart;
+        upsertPlayer('host-tmp', info.hostName);
         updatePlayersList();
       } catch (e) {
-        roomStatusEl.textContent = 'Gagal cek room. Cek koneksi / SETUP.md';
+        roomStatusEl.textContent = 'Gagal cek room. Deploy ulang script.';
         return;
       }
     }
 
-    if (peer) try { peer.destroy(); } catch(e){}
-    peer = new Peer({
-      debug: 0,
-      config: { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] }
-    });
-
-    peer.on('open', () => {
-      const connection = peer.connect(peerId, { reliable: true });
-      setupConnection(connection, false);
-    });
-
-    peer.on('error', (err) => {
-      roomStatusEl.textContent = 'Gagal join: ' + err.type + '. Pastikan host masih online.';
-    });
+    const p = makePeer();
+    p.on('open', () => bindConn(p.connect(peerId, { reliable: true }), false));
+    p.on('error', (err) => { roomStatusEl.textContent = 'Gagal join: ' + err.type; });
   }
 
-  // ========== GAME ENGINE ==========
   function resizeCanvas() {
-    const container = document.getElementById('game-container');
+    const box = document.getElementById('game-container');
     const hud = document.getElementById('hud');
-    if (!container || !hud) return;
-    const maxW = Math.min(container.clientWidth || 400, 480);
-    const maxH = (container.clientHeight || 600) - hud.offsetHeight;
-    canvas.width = maxW;
-    canvas.height = Math.max(280, maxH);
-    if (paddle) {
-      paddle.y = canvas.height - 30;
-      paddle.x = Math.min(paddle.x, canvas.width - paddle.width);
-    }
+    if (!box || !hud) return;
+    const w = Math.min(box.clientWidth || 400, 520);
+    const h = Math.max(260, (box.clientHeight || 600) - hud.offsetHeight - (IS_MOBILE ? 22 : 0));
+    canvas.width = w;
+    canvas.height = h;
+    paddle.y = canvas.height - 28;
   }
 
   function createBricks(levelIndex) {
     bricks = [];
     const level = gameData.levels[levelIndex];
     const pattern = level.pattern;
-    const rows = pattern.length;
-    const cols = pattern[0].length;
-    const totalPadding = settings.brickPadding * (cols - 1);
-    const availableWidth = canvas.width - settings.brickOffsetLeft * 2;
-    const brickWidth = (availableWidth - totalPadding) / cols;
-    const brickHeight = 20;
-
+    const rows = pattern.length, cols = pattern[0].length;
+    const pad = settings.brickPadding;
+    const avail = canvas.width - settings.brickOffsetLeft * 2;
+    const bw = (avail - pad * (cols - 1)) / cols;
+    const bh = IS_MOBILE ? 18 : 20;
     for (let r = 0; r < rows; r++) {
       for (let c = 0; c < cols; c++) {
         const typeId = pattern[r][c];
-        if (typeId === 0) continue;
+        if (!typeId) continue;
         const type = gameData.brickTypes[String(typeId)];
         bricks.push({
-          x: settings.brickOffsetLeft + c * (brickWidth + settings.brickPadding),
-          y: settings.brickOffsetTop + r * (brickHeight + settings.brickPadding),
-          width: brickWidth, height: brickHeight,
-          typeId, color: type.color, points: type.points, hp: type.hp, maxHp: type.hp
+          x: settings.brickOffsetLeft + c * (bw + pad),
+          y: settings.brickOffsetTop + r * (bh + pad),
+          width: bw, height: bh, color: type.color, points: type.points, hp: type.hp, maxHp: type.hp
         });
       }
     }
@@ -467,17 +427,15 @@
     const scale = canvas.width / 400;
     paddle.width = settings.paddleWidth * scale;
     paddle.height = settings.paddleHeight;
-    paddle.speed = settings.paddleSpeed;
+    paddle.speed = settings.paddleSpeed * (IS_MOBILE ? 1.15 : 1);
     paddle.x = canvas.width / 2 - paddle.width / 2;
-    paddle.y = canvas.height - 30;
-
+    paddle.y = canvas.height - 28;
     ball.radius = settings.ballRadius;
     ball.x = canvas.width / 2;
-    ball.y = paddle.y - ball.radius - 4;
-
+    ball.y = paddle.y - ball.radius - 3;
     const level = gameData.levels[currentLevel];
     ball.speed = (level.ballSpeed || settings.ballSpeed) * scale;
-    const angle = (Math.random() * 0.7 - 0.35) - Math.PI / 2;
+    const angle = (Math.random() * 0.6 - 0.3) - Math.PI / 2;
     ball.dx = Math.cos(angle) * ball.speed;
     ball.dy = Math.sin(angle) * ball.speed;
   }
@@ -492,25 +450,17 @@
 
   function updateHUD() {
     scoreEl.textContent = score;
-    myLiveScore.textContent = score;
     livesEl.textContent = '♥ '.repeat(Math.max(0, lives)).trim() || '—';
-    if (isMultiplayer) send({ type: 'score', score });
+    const me = roster.find(p => p.id === myNetId);
+    if (me) me.score = score;
+    renderLiveScores();
+    if (isMultiplayer) sendAll({ type: 'score', id: myNetId, score });
   }
 
-  function spawnParticles(x, y, color, count = 7) {
-    for (let i = 0; i < count; i++) {
-      particles.push({
-        x, y, dx: (Math.random()-0.5)*6, dy: (Math.random()-0.5)*6,
-        life: 25+Math.random()*20, maxLife: 45, color, size: 2+Math.random()*3
-      });
-    }
-  }
-
-  function updateParticles() {
-    for (let i = particles.length-1; i >= 0; i--) {
-      const p = particles[i];
-      p.x += p.dx; p.y += p.dy; p.dy += 0.14; p.life--;
-      if (p.life <= 0) particles.splice(i, 1);
+  function spawnParticles(x, y, color) {
+    const n = IS_MOBILE ? 4 : 8;
+    for (let i = 0; i < n; i++) {
+      particles.push({ x, y, dx:(Math.random()-.5)*5, dy:(Math.random()-.5)*5, life:20, maxLife:20, color, size:2 });
     }
   }
 
@@ -520,33 +470,38 @@
     return (b.x-cx)**2 + (b.y-cy)**2 < b.radius**2;
   }
 
-  function update() {
+  function shadeColor(color, percent) {
+    const num = parseInt(color.replace('#',''), 16);
+    const amt = Math.round(2.55 * percent);
+    const R = Math.max(0, Math.min(255, (num >> 16) + amt));
+    const G = Math.max(0, Math.min(255, ((num >> 8) & 0xff) + amt));
+    const B = Math.max(0, Math.min(255, (num & 0xff) + amt));
+    return `#${(0x1000000 + R*0x10000 + G*0x100 + B).toString(16).slice(1)}`;
+  }
+
+  function update(dt) {
     if (!isRunning || isPaused) return;
-
-    if (rightPressed) paddle.x += paddle.speed;
-    if (leftPressed) paddle.x -= paddle.speed;
+    const step = Math.min(dt, 32) / 16.67;
+    if (rightPressed) paddle.x += paddle.speed * step;
+    if (leftPressed) paddle.x -= paddle.speed * step;
     paddle.x = Math.max(0, Math.min(canvas.width - paddle.width, paddle.x));
-
-    ball.x += ball.dx;
-    ball.y += ball.dy;
+    ball.x += ball.dx * step;
+    ball.y += ball.dy * step;
 
     if (ball.x - ball.radius < 0) { ball.x = ball.radius; ball.dx = -ball.dx; sfxWall(); }
     else if (ball.x + ball.radius > canvas.width) { ball.x = canvas.width - ball.radius; ball.dx = -ball.dx; sfxWall(); }
     if (ball.y - ball.radius < 0) { ball.y = ball.radius; ball.dy = -ball.dy; sfxWall(); }
 
     if (ball.y - ball.radius > canvas.height) {
-      lives--;
-      updateHUD();
-      sfxLife();
+      lives--; updateHUD(); sfxLife();
       if (lives <= 0) { playerFinished(); return; }
       resetBallAndPaddle();
-      isPaused = true;
-      setTimeout(() => isPaused = false, 550);
+      isPaused = true; setTimeout(() => isPaused = false, 400);
       return;
     }
 
-    if (ball.y + ball.radius >= paddle.y && ball.y - ball.radius <= paddle.y + paddle.height &&
-        ball.x >= paddle.x && ball.x <= paddle.x + paddle.width && ball.dy > 0) {
+    if (ball.y + ball.radius >= paddle.y && ball.dy > 0 &&
+        ball.x >= paddle.x && ball.x <= paddle.x + paddle.width) {
       const hitPos = (ball.x - (paddle.x + paddle.width/2)) / (paddle.width/2);
       const angle = -Math.PI/2 + hitPos * (Math.PI/3);
       ball.dx = Math.cos(angle) * ball.speed;
@@ -561,197 +516,140 @@
         const prevX = ball.x - ball.dx;
         if (prevX < brick.x || prevX > brick.x + brick.width) ball.dx = -ball.dx;
         else ball.dy = -ball.dy;
-        brick.hp--;
-        sfxBrick();
-        spawnParticles(brick.x + brick.width/2, brick.y + brick.height/2, brick.color);
-        if (brick.hp <= 0) {
-          score += brick.points;
-          bricks.splice(i, 1);
-          updateHUD();
-        } else {
-          brick.color = shadeColor(brick.color, -40);
-        }
+        brick.hp--; sfxBrick();
+        if (!IS_MOBILE) spawnParticles(brick.x + brick.width/2, brick.y + brick.height/2, brick.color);
+        if (brick.hp <= 0) { score += brick.points; bricks.splice(i,1); updateHUD(); }
+        else brick.color = shadeColor(brick.color, -35);
         break;
       }
     }
-
     if (bricks.length === 0) { levelComplete(); return; }
-    updateParticles();
-  }
-
-  function shadeColor(color, percent) {
-    const num = parseInt(color.replace('#',''), 16);
-    const amt = Math.round(2.55 * percent);
-    const R = Math.max(0, Math.min(255, (num >> 16) + amt));
-    const G = Math.max(0, Math.min(255, ((num >> 8) & 0xff) + amt));
-    const B = Math.max(0, Math.min(255, (num & 0xff) + amt));
-    return `#${(0x1000000 + R*0x10000 + G*0x100 + B).toString(16).slice(1)}`;
-  }
-
-  function draw() {
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-    bricks.forEach(brick => {
-      ctx.shadowColor = brick.color; ctx.shadowBlur = 8;
-      ctx.fillStyle = brick.color;
-      roundRect(ctx, brick.x, brick.y, brick.width, brick.height, 4);
-      ctx.fill();
-      ctx.shadowBlur = 0;
-      ctx.fillStyle = 'rgba(255,255,255,0.15)';
-      roundRect(ctx, brick.x+2, brick.y+2, brick.width-4, brick.height/3, 2);
-      ctx.fill();
-      if (brick.maxHp > 1 && brick.hp < brick.maxHp) {
-        ctx.fillStyle = 'rgba(0,0,0,0.35)';
-        roundRect(ctx, brick.x, brick.y, brick.width, brick.height, 4);
-        ctx.fill();
-      }
-    });
-
-    ctx.shadowColor = '#e63946'; ctx.shadowBlur = 12;
-    const grad = ctx.createLinearGradient(paddle.x, paddle.y, paddle.x, paddle.y + paddle.height);
-    grad.addColorStop(0, '#ff6b6b'); grad.addColorStop(0.5, '#e63946'); grad.addColorStop(1, '#b71c1c');
-    ctx.fillStyle = grad;
-    roundRect(ctx, paddle.x, paddle.y, paddle.width, paddle.height, 7);
-    ctx.fill();
-    ctx.shadowBlur = 0;
-    ctx.fillStyle = 'rgba(255,255,255,0.25)';
-    roundRect(ctx, paddle.x+4, paddle.y+2, paddle.width-8, 4, 3);
-    ctx.fill();
-
-    ctx.shadowColor = '#00e676'; ctx.shadowBlur = 14;
-    const bg = ctx.createRadialGradient(ball.x-2, ball.y-2, 1, ball.x, ball.y, ball.radius);
-    bg.addColorStop(0, '#a7ffeb'); bg.addColorStop(0.6, '#2a9d8f'); bg.addColorStop(1, '#1a7a6d');
-    ctx.fillStyle = bg;
-    ctx.beginPath(); ctx.arc(ball.x, ball.y, ball.radius, 0, Math.PI*2); ctx.fill();
-    ctx.shadowBlur = 0;
-
-    particles.forEach(p => {
-      ctx.globalAlpha = p.life / p.maxLife;
-      ctx.fillStyle = p.color;
-      ctx.beginPath(); ctx.arc(p.x, p.y, p.size * (p.life/p.maxLife), 0, Math.PI*2); ctx.fill();
-    });
-    ctx.globalAlpha = 1;
-
-    if (isRunning) {
-      ctx.fillStyle = 'rgba(42,157,143,0.5)';
-      ctx.font = '12px Rajdhani';
-      ctx.textAlign = 'left';
-      ctx.fillText('LEVEL ' + (currentLevel+1), 10, 16);
+    for (let i = particles.length-1; i >= 0; i--) {
+      const p = particles[i];
+      p.x += p.dx; p.y += p.dy; p.life--;
+      if (p.life <= 0) particles.splice(i,1);
     }
   }
 
-  function roundRect(ctx, x, y, w, h, r) {
-    ctx.beginPath();
-    ctx.moveTo(x+r, y);
-    ctx.lineTo(x+w-r, y);
-    ctx.quadraticCurveTo(x+w, y, x+w, y+r);
-    ctx.lineTo(x+w, y+h-r);
-    ctx.quadraticCurveTo(x+w, y+h, x+w-r, y+h);
-    ctx.lineTo(x+r, y+h);
-    ctx.quadraticCurveTo(x, y+h, x, y+h-r);
-    ctx.lineTo(x, y+r);
-    ctx.quadraticCurveTo(x, y, x+r, y);
-    ctx.closePath();
+  function draw() {
+    ctx.fillStyle = '#0c0c0c';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.shadowBlur = 0;
+    bricks.forEach(brick => {
+      ctx.fillStyle = brick.color;
+      ctx.fillRect(brick.x, brick.y, brick.width, brick.height);
+    });
+    ctx.fillStyle = '#e63946';
+    ctx.fillRect(paddle.x, paddle.y, paddle.width, paddle.height);
+    ctx.fillStyle = '#2a9d8f';
+    ctx.beginPath(); ctx.arc(ball.x, ball.y, ball.radius, 0, Math.PI*2); ctx.fill();
+    if (!IS_MOBILE) {
+      particles.forEach(p => {
+        ctx.globalAlpha = p.life / p.maxLife;
+        ctx.fillStyle = p.color;
+        ctx.fillRect(p.x, p.y, p.size, p.size);
+      });
+      ctx.globalAlpha = 1;
+    }
+    ctx.fillStyle = 'rgba(42,157,143,.55)';
+    ctx.font = '12px Rajdhani';
+    ctx.fillText('LEVEL ' + (currentLevel+1), 8, 14);
   }
 
-  function loop() {
-    update();
+  function loop(ts) {
+    const dt = lastTs ? (ts - lastTs) : 16;
+    lastTs = ts;
+    update(dt);
     draw();
     animationId = requestAnimationFrame(loop);
   }
 
-  // ========== FLOW ==========
   function startSolo() {
     myName = getPlayerName();
-    isMultiplayer = false;
-    if (apiBase()) apiGet('play').then(setStats).catch(() => {});
+    isMultiplayer = false; roster = [];
+    if (apiBase()) apiGet('play').then(setStats).catch(()=>{});
     showScreen('game');
     myNameHud.textContent = myName;
-    oppNameHud.textContent = '—';
-    oppLiveScore.textContent = '—';
     score = 0; lives = settings.lives; currentLevel = 0;
     gameOverOverlay.classList.add('hidden');
     levelUpOverlay.classList.add('hidden');
-    resizeCanvas();
-    startLevel(0);
-    isRunning = true; isPaused = false;
-    if (!animationId) loop();
+    resizeCanvas(); startLevel(0);
+    isRunning = true; isPaused = false; lastTs = 0;
+    if (!animationId) animationId = requestAnimationFrame(loop);
   }
 
   function startMultiplayerMatch() {
-    if (apiBase()) apiGet('play').then(setStats).catch(() => {});
+    if (apiBase()) apiGet('play').then(setStats).catch(()=>{});
     showScreen('game');
     myNameHud.textContent = myName;
-    oppNameHud.textContent = opponent.name;
-    myLiveScore.textContent = '0';
-    oppLiveScore.textContent = '0';
     score = 0; lives = settings.lives; currentLevel = 0;
-    opponent.score = 0; opponent.finished = false;
+    roster.forEach(p => { p.score = 0; p.finished = false; });
     gameOverOverlay.classList.add('hidden');
     levelUpOverlay.classList.add('hidden');
-    resizeCanvas();
-    startLevel(0);
-    isRunning = true; isPaused = false;
-    if (!animationId) loop();
+    resizeCanvas(); startLevel(0);
+    isRunning = true; isPaused = false; lastTs = 0;
+    if (!animationId) animationId = requestAnimationFrame(loop);
   }
 
   function levelComplete() {
     isRunning = false;
-    sfxWin();
-    if (currentLevel >= gameData.levels.length - 1) {
-      playerFinished();
-    } else {
+    if (currentLevel >= gameData.levels.length - 1) playerFinished();
+    else {
       levelMessage.textContent = `Level ${currentLevel+1} selesai! Score: ${score}`;
       levelUpOverlay.classList.remove('hidden');
     }
   }
-
   function nextLevel() {
     levelUpOverlay.classList.add('hidden');
     startLevel(currentLevel + 1);
     isRunning = true;
   }
-
   function playerFinished() {
     isRunning = false;
     if (isMultiplayer) {
-      send({ type: 'finished', score });
-      if (opponent.finished) {
-        endMatch();
-      } else {
-        goTitle.textContent = 'Menunggu lawan selesai...';
-        finalResults.innerHTML = `<p>Score kamu: <strong>${score}</strong></p><p>Menunggu ${escapeHtml(opponent.name)}...</p>`;
-        gameOverOverlay.classList.remove('hidden');
-      }
-    } else {
-      endMatch();
+      sendAll({ type: 'finished', id: myNetId, score });
+      const me = roster.find(p => p.id === myNetId);
+      if (me) { me.finished = true; me.score = score; }
+      checkAllFinished();
+    } else endMatch();
+  }
+  function checkAllFinished() {
+    if (!roster.length) return;
+    if (roster.every(p => p.finished)) endMatch();
+    else {
+      goTitle.textContent = 'Menunggu pemain lain...';
+      finalResults.innerHTML = roster.map(p => `<p>${escapeHtml(p.name)}: <strong>${p.score}</strong> ${p.finished?'✓':''}</p>`).join('');
+      gameOverOverlay.classList.remove('hidden');
     }
   }
-
-  function checkBothFinished() {
-    if (opponent.finished) endMatch();
-  }
-
-  function endMatch(msg) {
+  function endMatch() {
     isRunning = false;
-    sfxLose();
     goTitle.textContent = 'HASIL AKHIR';
-    let html = '';
-    if (isMultiplayer) {
-      const myWin = score > opponent.score;
-      const draw = score === opponent.score;
-      html = `<div class="winner">${draw ? 'SERI!' : (myWin ? 'KAMU MENANG!' : escapeHtml(opponent.name) + ' MENANG!')}</div>
-        <p>${escapeHtml(myName)}: <strong>${score}</strong></p>
-        <p>${escapeHtml(opponent.name)}: <strong>${opponent.score}</strong></p>`;
+    if (isMultiplayer && roster.length) {
+      const sorted = roster.slice().sort((a,b)=>b.score-a.score);
+      const top = sorted[0];
+      finalResults.innerHTML = `<div class="winner">${escapeHtml(top.name)} MENANG!</div>` +
+        sorted.map(p => `<p>${escapeHtml(p.name)}: <strong>${p.score}</strong></p>`).join('');
     } else {
-      html = `<p>Score akhir: <strong>${score}</strong></p>`;
+      finalResults.innerHTML = `<p>Score akhir: <strong>${score}</strong></p>`;
     }
-    if (msg) html = `<p>${msg}</p>` + html;
-    finalResults.innerHTML = html;
     gameOverOverlay.classList.remove('hidden');
   }
 
-  // ========== INPUT ==========
+  function leaveAll() {
+    if (isHost && roomCode && apiBase()) apiGet('close', { roomId: roomCode }).catch(()=>{});
+    stopHeartbeat();
+    hostConns.forEach(c => { try { c.close(); } catch(e){} });
+    if (guestConn) try { guestConn.close(); } catch(e){}
+    if (peer) try { peer.destroy(); } catch(e){}
+    peer = null; hostConns = []; guestConn = null;
+    isRunning = false;
+    if (animationId) cancelAnimationFrame(animationId);
+    animationId = null;
+    showScreen('lobby');
+    refreshLobby();
+  }
+
   document.addEventListener('keydown', e => {
     if (['ArrowRight','d','D'].includes(e.key)) rightPressed = true;
     if (['ArrowLeft','a','A'].includes(e.key)) leftPressed = true;
@@ -760,112 +658,63 @@
     if (['ArrowRight','d','D'].includes(e.key)) rightPressed = false;
     if (['ArrowLeft','a','A'].includes(e.key)) leftPressed = false;
   });
-
   function pointerMove(clientX) {
     if (!isRunning) return;
     const rect = canvas.getBoundingClientRect();
-    const scaleX = canvas.width / rect.width;
-    paddle.x = (clientX - rect.left) * scaleX - paddle.width / 2;
+    paddle.x = (clientX - rect.left) * (canvas.width / rect.width) - paddle.width / 2;
     paddle.x = Math.max(0, Math.min(canvas.width - paddle.width, paddle.x));
   }
   canvas.addEventListener('mousemove', e => pointerMove(e.clientX));
   canvas.addEventListener('touchmove', e => { e.preventDefault(); if (e.touches[0]) pointerMove(e.touches[0].clientX); }, {passive:false});
   canvas.addEventListener('touchstart', e => { e.preventDefault(); if (e.touches[0]) pointerMove(e.touches[0].clientX); }, {passive:false});
 
-  // ========== BUTTONS ==========
-  btnSolo.addEventListener('click', () => { if (audioCtx.state==='suspended') audioCtx.resume(); startSolo(); });
-  btnCreate.addEventListener('click', () => { if (audioCtx.state==='suspended') audioCtx.resume(); createRoom(); });
-  btnJoin.addEventListener('click', () => { if (audioCtx.state==='suspended') audioCtx.resume(); joinRoom(); });
-
-  btnStartMatch.addEventListener('click', () => {
-    if (!isHost) return;
-    send({ type: 'start' });
+  btnSolo.onclick = () => { if (audioCtx.state==='suspended') audioCtx.resume(); startSolo(); };
+  btnCreate.onclick = () => { if (audioCtx.state==='suspended') audioCtx.resume(); createRoom(); };
+  btnJoin.onclick = () => { if (audioCtx.state==='suspended') audioCtx.resume(); joinRoom(); };
+  btnStartMatch.onclick = () => {
+    if (btnStartMatch.disabled) return;
+    sendAll({ type: 'start' });
     startMultiplayerMatch();
-  });
-
-  btnLeave.addEventListener('click', () => {
-    if (isHost && roomCode && apiBase()) apiGet('close', { roomId: roomCode }).catch(() => {});
-    stopHeartbeat();
-    if (conn) try { conn.close(); } catch(e){}
-    if (peer) try { peer.destroy(); } catch(e){}
-    conn = null; peer = null;
-    showScreen('lobby');
-    refreshLobby();
-  });
-
-  nextLevelBtn.addEventListener('click', nextLevel);
-
-  restartBtn.addEventListener('click', () => {
+  };
+  btnLeave.onclick = leaveAll;
+  nextLevelBtn.onclick = nextLevel;
+  restartBtn.onclick = () => {
     gameOverOverlay.classList.add('hidden');
     if (isMultiplayer) {
-      opponent.finished = false; opponent.score = 0;
-      if (isHost) {
-        send({ type: 'start' });
+      if (isHost || allowGuestStart) {
+        sendAll({ type: 'start' });
         startMultiplayerMatch();
       } else {
         goTitle.textContent = 'Menunggu host...';
-        finalResults.innerHTML = '<p>Host akan memulai ulang.</p>';
         gameOverOverlay.classList.remove('hidden');
       }
-    } else {
-      startSolo();
-    }
-  });
+    } else startSolo();
+  };
+  backLobbyBtn.onclick = leaveAll;
+  btnCopy.onclick = async () => {
+    try { await navigator.clipboard.writeText(copyCodeInput.value); }
+    catch (e) { copyCodeInput.select(); document.execCommand('copy'); }
+    btnCopy.textContent = 'Tersalin';
+    btnCopy.classList.add('copied');
+    setTimeout(() => { btnCopy.textContent = 'Copy'; btnCopy.classList.remove('copied'); }, 1200);
+  };
+  window.addEventListener('resize', () => { if (!gameScreenEl.classList.contains('hidden')) resizeCanvas(); });
 
-  backLobbyBtn.addEventListener('click', () => {
-    if (isHost && roomCode && apiBase()) apiGet('close', { roomId: roomCode }).catch(() => {});
-    stopHeartbeat();
-    if (conn) try { conn.close(); } catch(e){}
-    if (peer) try { peer.destroy(); } catch(e){}
-    conn = null; peer = null;
-    isRunning = false;
-    if (animationId) cancelAnimationFrame(animationId);
-    animationId = null;
-    showScreen('lobby');
-    refreshLobby();
-  });
-
-  if (btnCopy) {
-    btnCopy.addEventListener('click', async () => {
-      const val = copyCodeInput.value;
-      try {
-        await navigator.clipboard.writeText(val);
-      } catch (e) {
-        copyCodeInput.select();
-        document.execCommand('copy');
-      }
-      btnCopy.textContent = 'Tersalin!';
-      btnCopy.classList.add('copied');
-      setTimeout(() => {
-        btnCopy.textContent = 'Copy Kode';
-        btnCopy.classList.remove('copied');
-      }, 1500);
-    });
-  }
-
-  window.addEventListener('resize', () => {
-    if (!gameScreenEl.classList.contains('hidden')) resizeCanvas();
-  });
-
-  // ========== INIT ==========
   async function init() {
     await loadData();
     const saved = localStorage.getItem('monmon_name');
     if (saved) playerNameInput.value = saved;
-    playerNameInput.addEventListener('change', () => {
-      localStorage.setItem('monmon_name', playerNameInput.value.trim());
-    });
-
+    playerNameInput.addEventListener('change', () => localStorage.setItem('monmon_name', playerNameInput.value.trim()));
     if (apiBase()) {
       if (!sessionStorage.getItem('monmon_visited')) {
         sessionStorage.setItem('monmon_visited', '1');
-        apiGet('visit').then(setStats).catch(() => {});
+        apiGet('visit').then(setStats).catch(()=>{});
       }
       refreshLobby();
-      roomsPollTimer = setInterval(refreshLobby, 7000);
+      roomsPollTimer = setInterval(refreshLobby, 2500);
     } else {
+      apiWarnEl.textContent = 'Server belum disetting. Isi URL di config.js.';
       apiWarnEl.classList.remove('hidden');
-      publicRoomsEl.innerHTML = '<p class="muted">Isi config.js supaya room terlihat dunia.</p>';
     }
   }
   init();

@@ -2,10 +2,11 @@
 <html lang="id">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-  <title>Monmon Shatter Online — by Muhammad Rizki Azri Mulyana</title>
-  <meta name="description" content="Monmon Shatter Online Multiplayer Brick Breaker by Muhammad Rizki Azri Mulyana" />
-  <meta name="author" content="Muhammad Rizki Azri Mulyana" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <title>Monmon Shatter Online — Muhammad Rizki Azri Mulyana</title>
+  <link rel="icon" type="image/svg+xml" href="favicon.svg" />
+  <link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png" />
+  <link rel="apple-touch-icon" href="apple-touch-icon.png" />
   <link rel="stylesheet" href="style.css" />
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -14,38 +15,37 @@
 </head>
 <body>
   <div id="app">
-    <!-- ========== LOBBY ========== -->
     <div id="lobby" class="screen">
       <div class="lobby-card wide">
         <div class="logo">
+          <img src="favicon.svg" alt="" class="logo-mark" />
           <h1>MONMON<br><span>SHATTER</span></h1>
           <p class="tagline">Online Multiplayer Brick Breaker</p>
         </div>
 
-        <div class="stats-bar" id="statsBar">
-          <div class="stat">
-            <span class="stat-num" id="statVisits">—</span>
-            <span class="stat-label">Pengunjung</span>
-          </div>
-          <div class="stat">
-            <span class="stat-num" id="statPlays">—</span>
-            <span class="stat-label">Sudah Main</span>
-          </div>
-          <div class="stat">
-            <span class="stat-num" id="statRooms">—</span>
-            <span class="stat-label">Room Online</span>
-          </div>
+        <div class="stats-bar">
+          <div class="stat"><span class="stat-num" id="statVisits">—</span><span class="stat-label">Pengunjung</span></div>
+          <div class="stat"><span class="stat-num" id="statPlays">—</span><span class="stat-label">Sudah Main</span></div>
+          <div class="stat"><span class="stat-num" id="statRooms">—</span><span class="stat-label">Room Online</span></div>
         </div>
 
         <div class="form-group">
           <label for="playerName">Nama Kamu</label>
-          <input type="text" id="playerName" placeholder="Masukkan nama..." maxlength="16" autocomplete="off" />
+          <input type="text" id="playerName" placeholder="Masukkan nama..." maxlength="16" autocomplete="nickname" />
         </div>
 
-        <div class="privacy-row">
+        <div class="options-box">
           <label class="check-label">
             <input type="checkbox" id="requireCode" />
-            <span>Room pakai kode (teman harus isi kode untuk join)</span>
+            <span>Pakai kode untuk join</span>
+          </label>
+          <div id="customCodeWrap" class="form-group hidden">
+            <label for="customCode">Kode custom (kosongkan = otomatis)</label>
+            <input type="text" id="customCode" placeholder="Contoh: RIZKI" maxlength="10" autocomplete="off" />
+          </div>
+          <label class="check-label">
+            <input type="checkbox" id="allowGuestStart" />
+            <span>Guest boleh klik Mulai</span>
           </label>
         </div>
 
@@ -55,49 +55,37 @@
         </div>
 
         <div class="divider"><span>Room Online</span></div>
-        <div id="apiWarn" class="api-warn hidden">
-          Server belum disetting. Isi URL di <code>config.js</code> (lihat SETUP.md).
-        </div>
-        <div id="publicRooms" class="rooms-list">
-          <p class="muted">Memuat room...</p>
-        </div>
+        <div id="apiWarn" class="api-warn hidden"></div>
+        <div id="publicRooms" class="rooms-list"><p class="muted">Memuat room...</p></div>
 
         <div class="divider"><span>Join pakai kode</span></div>
-        <div class="form-group">
-          <div class="join-row">
-            <input type="text" id="roomCode" placeholder="Kode 6 huruf" maxlength="8" autocomplete="off" />
-            <button id="btn-join" class="btn primary">Join</button>
-          </div>
+        <div class="join-row">
+          <input type="text" id="roomCode" placeholder="Kode room" maxlength="10" autocomplete="off" />
+          <button id="btn-join" class="btn primary">Join</button>
         </div>
 
         <p class="credit">Created by <strong>Muhammad Rizki Azri Mulyana</strong></p>
       </div>
     </div>
 
-    <!-- ========== ROOM ========== -->
     <div id="room" class="screen hidden">
       <div class="lobby-card room-card">
         <h2>Room: <span id="displayRoomCode">----</span></h2>
-        <p class="hint" id="roomHint">Bagikan kode ini ke temanmu</p>
-
-        <div class="copy-row hidden" id="copyRow">
+        <p class="hint" id="roomHint">Bagikan ke teman</p>
+        <div class="copy-row" id="copyRow">
           <input type="text" id="copyCodeInput" readonly />
-          <button id="btn-copy" class="btn primary">Copy Kode</button>
+          <button id="btn-copy" class="btn primary">Copy</button>
         </div>
-
         <div class="players-list" id="playersList"></div>
-        <div class="room-status" id="roomStatus">Menunggu lawan...</div>
-
+        <div class="room-status" id="roomStatus">Menunggu pemain...</div>
         <div class="btn-group">
-          <button id="btn-start-match" class="btn primary" disabled>Mulai Tanding</button>
+          <button id="btn-start-match" class="btn primary" disabled>Mulai</button>
           <button id="btn-leave" class="btn secondary">Keluar</button>
         </div>
-
-        <p class="credit">Created by <strong>Muhammad Rizki Azri Mulyana</strong></p>
+        <p class="credit">Maksimal 6 pemain · Created by <strong>Muhammad Rizki Azri Mulyana</strong></p>
       </div>
     </div>
 
-    <!-- ========== GAME ========== -->
     <div id="game-screen" class="screen hidden">
       <div id="game-container">
         <header id="hud">
@@ -106,31 +94,16 @@
             <span id="score">0</span>
           </div>
           <div class="hud-item center">
-            <div id="vs-info">
-              <span id="myNameHud">Kamu</span>
-              <span class="vs">VS</span>
-              <span id="oppNameHud">Lawan</span>
-            </div>
-            <div id="live-scores">
-              <span id="myLiveScore">0</span> - <span id="oppLiveScore">0</span>
-            </div>
+            <div id="vs-info"><span id="myNameHud">Kamu</span></div>
+            <div id="live-scores"></div>
           </div>
           <div class="hud-item right">
             <span class="label">LIVES</span>
             <span id="lives">♥ ♥ ♥</span>
           </div>
         </header>
-
         <canvas id="gameCanvas"></canvas>
-        <div id="mobile-hint" class="mobile-only">Geser layar untuk gerak paddle</div>
-      </div>
-
-      <div id="overlay" class="overlay hidden">
-        <div class="overlay-content">
-          <h2 id="overlay-title">MONMON SHATTER</h2>
-          <p id="overlay-message"></p>
-          <button id="start-btn" class="btn primary">MULAI</button>
-        </div>
+        <div id="mobile-hint" class="mobile-only">Geser untuk gerak paddle</div>
       </div>
 
       <div id="level-up" class="overlay hidden">
@@ -140,18 +113,16 @@
           <button id="next-level-btn" class="btn primary">LANJUT</button>
         </div>
       </div>
-
       <div id="game-over" class="overlay hidden">
         <div class="overlay-content">
           <h2 id="go-title">HASIL AKHIR</h2>
           <div id="final-results"></div>
           <button id="restart-btn" class="btn primary">Main Lagi</button>
-          <button id="back-lobby-btn" class="btn secondary">Kembali ke Lobby</button>
+          <button id="back-lobby-btn" class="btn secondary">Lobby</button>
         </div>
       </div>
     </div>
   </div>
-
   <script src="config.js"></script>
   <script src="script.js"></script>
 </body>
