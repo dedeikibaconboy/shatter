@@ -128,7 +128,7 @@ function doGet(e) {
     }
 
     if (action === 'create') {
-      cleanupRooms(rooms);
+      // jangan cleanup di sini, biar create cepat
       const hostName = cleanName(p.hostName);
       const peerId = String(p.peerId || '').substring(0, 80);
       const requiresCode = String(p.requiresCode) === '1' || String(p.requiresCode) === 'true';
@@ -172,7 +172,6 @@ function doGet(e) {
     }
 
     if (action === 'joininfo') {
-      cleanupRooms(rooms);
       const roomId = cleanCode(p.roomId);
       const givenCode = cleanCode(p.code);
       const row = findRoomRow(rooms, roomId);
@@ -201,6 +200,7 @@ function doGet(e) {
     }
 
     if (action === 'joinplayer') {
+      // no full cleanup
       const roomId = cleanCode(p.roomId);
       const playerId = String(p.playerId || '').substring(0, 24);
       const name = cleanName(p.name);

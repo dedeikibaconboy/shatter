@@ -80,8 +80,8 @@
       const s = document.createElement('script');
       const timer = setTimeout(() => {
         cleanup();
-        reject(new Error('Server tidak merespon. Deploy ulang Web App, akses Anyone.'));
-      }, 12000);
+        reject(new Error('timeout'));
+      }, 20000);
       function cleanup() {
         clearTimeout(timer);
         try { delete window[cb]; } catch(e) { window[cb] = undefined; }
@@ -94,18 +94,35 @@
     });
   }
 
+  function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
   async function apiGet(action, extra) {
     const base = apiBase();
     if (!base) throw new Error('API kosong. Isi config.js');
     try {
       const params = new URLSearchParams(Object.assign({ action }, extra || {}));
-      const res = await fetch(base + '?' + params.toString(), { cache: 'no-store' });
+      const ctrl = new AbortController();
+      const tmr = setTimeout(() => ctrl.abort(), 8000);
+      const res = await fetch(base + '?' + params.toString(), { cache: 'no-store', signal: ctrl.signal });
+      clearTimeout(tmr);
       const text = await res.text();
       if (!text || text.trim().charAt(0) === '<') throw new Error('HTML');
       return JSON.parse(text);
     } catch (e) {
       return apiJsonp(action, extra);
     }
+  }
+
+  async function recoverRoom(roomId) {
+    if (!roomId) return null;
+    for (let i = 0; i < 6; i++) {
+      try {
+        const data = await apiGet('roomstate', { roomId });
+        if (data && data.ok) return data;
+      } catch (e) {}
+      await sleep(1200);
+    }
+    return null;
   }
   function setStats(s) {
     if (!s) return;
@@ -406,49 +423,59 @@
       copyCodeInput.value = custom;
     }
 
-    const p = makePeer();
-    p.on('open', async (id) => {
-      myPeerId = id;
+    async function finishHostRoom(id, peerId) {
+      roomCode = id;
+      displayRoomCode.textContent = id;
+      copyCodeInput.value = id;
+      roomHint.textContent = roomRequiresCode
+        ? 'Room privat. Copy kode lalu kirim ke teman.'
+        : 'Room publik. Laptop lain akan melihat room ini.';
+      try {
+        const joined = await apiGet('joinplayer', {
+          roomId: id, playerId: myNetId, name: myName, isHost: '1', code: id
+        });
+        if (joined && joined.roster) applySheetRoster(joined.roster);
+      } catch (e) {}
+      startHeartbeat();
+      roomStatusEl.textContent = 'Menunggu pemain join...';
+    }
+
+    (async () => {
       if (!apiBase()) {
-        roomCode = custom || id.slice(-6).toUpperCase();
-        displayRoomCode.textContent = roomCode;
-        copyCodeInput.value = roomCode;
-        roomHint.textContent = 'Server belum siap. Deploy Apps Script dulu.';
+        roomStatusEl.textContent = 'Isi config.js dulu.';
         return;
       }
+      roomStatusEl.textContent = 'Mendaftarkan room...';
       try {
         const created = await apiGet('create', {
           hostName: myName,
-          peerId: id,
+          peerId: myPeerId || '-',
           requiresCode: roomRequiresCode ? '1' : '0',
           allowGuestStart: allowGuestStart ? '1' : '0',
           customCode: custom
         });
-        if (!created.ok) throw new Error(created.error || 'gagal');
-        roomCode = created.roomId;
-        displayRoomCode.textContent = roomCode;
-        copyCodeInput.value = roomCode;
-        roomHint.textContent = roomRequiresCode
-          ? 'Room privat. Copy kode lalu kirim ke teman.'
-          : 'Room publik. Laptop lain akan melihat room ini.';
-        await apiGet('joinplayer', {
-          roomId: roomCode,
-          playerId: myNetId,
-          name: myName,
-          isHost: '1',
-          code: roomCode
-        }).then(d => { if (d.roster) applySheetRoster(d.roster); }).catch(()=>{});
-        startHeartbeat();
-        refreshLobby();
+        if (created && created.ok) {
+          await finishHostRoom(created.roomId);
+          return;
+        }
+        throw new Error((created && created.error) || 'gagal');
       } catch (err) {
-        roomStatusEl.textContent = 'Gagal daftar room: ' + err.message;
+        const guess = custom || roomCode;
+        const recovered = guess ? await recoverRoom(guess) : null;
+        if (recovered) {
+          await finishHostRoom(recovered.roomId);
+          return;
+        }
+        roomStatusEl.textContent = 'Server Google sedang lambat. Jika guest sudah masuk room ini, klik Keluar lalu Join pakai kode yang sama. Atau buat room lagi.';
       }
-    });
+    })();
+
+    const p = makePeer();
+    p.on('open', (id) => { myPeerId = id; });
     p.on('connection', (c) => {
       if (roster.length >= MAX_PLAYERS) { c.close(); return; }
       bindConn(c, true);
     });
-    p.on('error', (err) => { roomStatusEl.textContent = 'Error: ' + err.type; });
   }
 
   function joinRoom() {
@@ -822,6 +849,24 @@
     } else startSolo(true);
   };
   backLobbyBtn.onclick = leaveAll;
+  const pauseOverlay = document.getElementById('pause-overlay');
+  const btnQuitGame = document.getElementById('btn-quit-game');
+  const btnResume = document.getElementById('btn-resume');
+  const btnPauseLobby = document.getElementById('btn-pause-lobby');
+  const btnLevelLobby = document.getElementById('btn-level-lobby');
+  if (btnQuitGame) btnQuitGame.onclick = () => {
+    isPaused = true;
+    if (pauseOverlay) pauseOverlay.classList.remove('hidden');
+  };
+  if (btnResume) btnResume.onclick = () => {
+    if (pauseOverlay) pauseOverlay.classList.add('hidden');
+    isPaused = false;
+  };
+  if (btnPauseLobby) btnPauseLobby.onclick = () => {
+    if (pauseOverlay) pauseOverlay.classList.add('hidden');
+    leaveAll();
+  };
+  if (btnLevelLobby) btnLevelLobby.onclick = leaveAll;
   btnCopy.onclick = async () => {
     try { await navigator.clipboard.writeText(copyCodeInput.value); }
     catch (e) { copyCodeInput.select(); document.execCommand('copy'); }
@@ -856,5 +901,12 @@
       apiWarnEl.classList.remove('hidden');
     }
   }
+  document.addEventListener('contextmenu', (e) => e.preventDefault());
+  document.addEventListener('keydown', (e) => {
+    const k = e.key.toLowerCase();
+    if (e.ctrlKey && (k === 'u' || k === 's')) e.preventDefault();
+    if (k === 'f12') e.preventDefault();
+  });
+
   init();
 })();

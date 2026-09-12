@@ -101,17 +101,27 @@
           <div class="hud-item right">
             <span class="label">LIVES</span>
             <span id="lives">♥ ♥ ♥</span>
+            <button type="button" id="btn-quit-game" class="quit-btn">Keluar</button>
           </div>
         </header>
         <canvas id="gameCanvas"></canvas>
         <div id="mobile-hint" class="mobile-only">Geser untuk gerak paddle</div>
       </div>
 
+      <div id="pause-overlay" class="overlay hidden">
+        <div class="overlay-content">
+          <h2>PAUSE</h2>
+          <p>Kembali ke lobby atau lanjut main?</p>
+          <button id="btn-resume" class="btn primary">Lanjut</button>
+          <button id="btn-pause-lobby" class="btn secondary">Kembali ke Lobby</button>
+        </div>
+      </div>
       <div id="level-up" class="overlay hidden">
         <div class="overlay-content">
           <h2>LEVEL CLEAR!</h2>
           <p id="level-message"></p>
           <button id="next-level-btn" class="btn primary">LANJUT</button>
+          <button id="btn-level-lobby" class="btn secondary">Kembali ke Lobby</button>
         </div>
       </div>
       <div id="game-over" class="overlay hidden">

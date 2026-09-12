@@ -113,3 +113,18 @@ input[type="text"]:focus { border-color:var(--red); }
   font-family: inherit;
 }
 .link-btn:hover { color: var(--green); }
+
+.quit-btn {
+  margin-top: 4px;
+  background: transparent;
+  border: 1px solid #555;
+  color: #ccc;
+  font-size: 10px;
+  padding: 3px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-family: Orbitron, sans-serif;
+  text-transform: uppercase;
+}
+.quit-btn:hover { border-color: var(--red); color: #fff; }
+.overlay-content .btn.secondary { margin-top: 8px; }

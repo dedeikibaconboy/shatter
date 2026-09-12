@@ -24,3 +24,8 @@ Tanpa New version, daftar room bisa tetap kosong / lambat.
 6. Tempel URL `/exec` ke `config.js`
 
 Header sheet dibuat otomatis. Tidak perlu diketik manual.
+
+
+## Kalau host gagal daftar room
+Create harus cepat. Tempel apps-script.gs terbaru lalu Deploy New version.
+Klik Keluar tetap ada di layar room. Di dalam game ada tombol Keluar di pojok lives.
