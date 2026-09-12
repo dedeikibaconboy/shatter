@@ -204,14 +204,30 @@
     });
   }
 
-  function upsertPlayer(id, name) {
+  function isPeerLive() {
+    if (isHost) return hostConns.some(c => c && c.open);
+    return !!(guestConn && guestConn.open);
+  }
+
+  function upsertPlayer(id, name, isHostPlayer) {
+    if (!id) return null;
     let p = roster.find(x => x.id === id);
     if (!p) {
       if (roster.length >= MAX_PLAYERS) return null;
-      p = { id, name, score: 0, finished: false, host: false };
+      p = { id, name: name || 'Player', score: 0, finished: false, host: !!isHostPlayer };
       roster.push(p);
-    } else if (name) p.name = name;
+    } else {
+      if (name) p.name = name;
+      if (isHostPlayer) p.host = true;
+    }
     return p;
+  }
+
+  function canClickStart() {
+    if (!isPeerLive()) return false;
+    if (roster.length < 2) return false;
+    if (isRunning) return false;
+    return isHost || allowGuestStart;
   }
 
   function updatePlayersList() {
@@ -222,9 +238,16 @@
       return `<div class="${cls}"><span class="name">${escapeHtml(p.name)}${you}</span><span class="badge">${badge}</span></div>`;
     }).join('') || '<p class="muted">Menunggu pemain...</p>';
     const guests = roster.filter(p => !p.host).length;
-    const canStart = guests >= 1 && (isHost || allowGuestStart);
-    btnStartMatch.disabled = !canStart;
-    roomStatusEl.textContent = guests ? `${roster.length}/${MAX_PLAYERS} pemain. Siap mulai.` : 'Menunggu pemain join...';
+    btnStartMatch.disabled = !canClickStart();
+    if (!isPeerLive()) {
+      roomStatusEl.textContent = isHost ? 'Menunggu pemain join...' : 'Menghubungkan ke host...';
+    } else if (guests < 1) {
+      roomStatusEl.textContent = 'Menunggu pemain join...';
+    } else if (canClickStart()) {
+      roomStatusEl.textContent = roster.map(p => p.name).join(', ') + ' siap. Bisa klik Mulai.';
+    } else {
+      roomStatusEl.textContent = roster.map(p => p.name).join(', ') + ' sudah masuk. Menunggu host mulai.';
+    }
     renderLiveScores();
   }
 
@@ -238,7 +261,8 @@
     if (isHost && fromConn && data.type !== 'hello') relayFromGuest(data, fromConn);
     switch (data.type) {
       case 'hello':
-        upsertPlayer(data.id, data.name);
+        if (fromConn) fromConn.playerId = data.id;
+        upsertPlayer(data.id, data.name, false);
         if (isHost) {
           sendAll({ type: 'roster', roster, allowGuestStart });
           updatePlayersList();
@@ -246,11 +270,12 @@
         }
         break;
       case 'roster':
-        roster = data.roster || roster;
+        roster = Array.isArray(data.roster) ? data.roster : roster;
         if (typeof data.allowGuestStart === 'boolean') allowGuestStart = data.allowGuestStart;
         updatePlayersList();
         break;
       case 'start':
+        if (roster.length < 2 && !isHost) return;
         startMultiplayerMatch();
         break;
       case 'score': {
@@ -269,21 +294,32 @@
   }
 
   function bindConn(connection, asHostSide) {
-    connection.on('open', () => {
+    connection.on('data', (d) => handleNet(d, connection));
+    const ready = () => {
       if (asHostSide) {
-        hostConns.push(connection);
+        if (!hostConns.includes(connection)) hostConns.push(connection);
         sendAll({ type: 'roster', roster, allowGuestStart });
+        updatePlayersList();
       } else {
         guestConn = connection;
         sendAll({ type: 'hello', id: myNetId, name: myName });
+        roomStatusEl.textContent = 'Terhubung. Menunggu daftar pemain dari host...';
       }
-    });
-    connection.on('data', (d) => handleNet(d, connection));
+    };
+    if (connection.open) ready();
+    else connection.on('open', ready);
     connection.on('close', () => {
       hostConns = hostConns.filter(c => c !== connection);
-      if (connection === guestConn) {
-        roomStatusEl.textContent = 'Terputus dari host.';
+      if (asHostSide && connection.playerId) {
+        roster = roster.filter(p => p.id !== connection.playerId);
+        sendAll({ type: 'roster', roster, allowGuestStart });
       }
+      if (connection === guestConn) {
+        guestConn = null;
+        roomStatusEl.textContent = 'Terputus dari host.';
+        btnStartMatch.disabled = true;
+      }
+      updatePlayersList();
     });
   }
 
@@ -376,8 +412,9 @@
         if (!info.ok) { roomStatusEl.textContent = info.error || 'Gagal join'; return; }
         peerId = info.peerId;
         allowGuestStart = !!info.allowGuestStart;
-        upsertPlayer('host-tmp', info.hostName);
-        updatePlayersList();
+        roomHint.textContent = 'Menghubungkan ke ' + (info.hostName || 'host') + '...';
+        roomStatusEl.textContent = 'Menghubungkan ke host. Jangan klik Mulai dulu.';
+        btnStartMatch.disabled = true;
       } catch (e) {
         roomStatusEl.textContent = 'Gagal cek room. Deploy ulang script.';
         return;
@@ -579,9 +616,13 @@
   }
 
   function startMultiplayerMatch() {
+    if (isMultiplayer && roster.length < 2) {
+      roomStatusEl.textContent = 'Belum ada lawan yang terhubung.';
+      return;
+    }
     if (apiBase()) apiGet('play').then(setStats).catch(()=>{});
     showScreen('game');
-    myNameHud.textContent = myName;
+    myNameHud.textContent = roster.length ? roster.map(p => p.name).join(' vs ') : myName;
     score = 0; lives = settings.lives; currentLevel = 0;
     roster.forEach(p => { p.score = 0; p.finished = false; });
     gameOverOverlay.classList.add('hidden');
@@ -672,7 +713,10 @@
   btnCreate.onclick = () => { if (audioCtx.state==='suspended') audioCtx.resume(); createRoom(); };
   btnJoin.onclick = () => { if (audioCtx.state==='suspended') audioCtx.resume(); joinRoom(); };
   btnStartMatch.onclick = () => {
-    if (btnStartMatch.disabled) return;
+    if (!canClickStart()) {
+      roomStatusEl.textContent = 'Tunggu sampai semua pemain tampil di daftar dulu.';
+      return;
+    }
     sendAll({ type: 'start' });
     startMultiplayerMatch();
   };
