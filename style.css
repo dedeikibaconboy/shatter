@@ -10,7 +10,7 @@
 * { margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
 html, body { height:100%; background:var(--black); font-family:'Rajdhani',sans-serif; color:var(--white); }
 #app { min-height:100%; min-height:100dvh; display:flex; justify-content:center; align-items:stretch; }
-.screen { width:100%; min-height:100%; min-height:100dvh; display:flex; justify-content:center; align-items:flex-start; padding:16px; padding-bottom:24px; overflow-y:auto; }
+.screen { position:relative; width:100%; min-height:100%; min-height:100dvh; display:flex; justify-content:center; align-items:flex-start; padding:16px; padding-bottom:24px; overflow-y:auto; }
 .screen.hidden { display:none !important; }
 .lobby-card {
   width:100%; max-width:440px; margin:auto;
@@ -99,21 +99,10 @@ input[type="text"]:focus { border-color:var(--red); }
 .overlay { position:absolute; inset:0; background:rgba(0,0,0,.9); display:flex; justify-content:center; align-items:center; z-index:20; }
 #pause-overlay { z-index:30; }
 #game-over { z-index:40; }
-#game-over.playable {
-  align-items:flex-start;
-  justify-content:center;
-  background:linear-gradient(180deg,rgba(0,0,0,.78) 0%,rgba(0,0,0,.28) 52%,rgba(0,0,0,0) 72%);
-  pointer-events:none;
-  padding-top:6px;
-}
-#game-over.playable .celebration-card {
-  pointer-events:auto;
-  transform:scale(.9);
-  transform-origin:top center;
-  margin-top:4px;
-  max-height:58dvh;
-  overflow:auto;
-}
+#guide-overlay, #credits-overlay { z-index:50; }
+.guide-card { text-align:left; max-width:min(440px,92vw); max-height:80dvh; overflow:auto; }
+.guide-card h2 { text-align:center; }
+.guide-body p { margin:0 0 10px; font-size:14px; line-height:1.45; color:#ddd; }
 .end-match-btn {
   margin-top:4px;
   background:linear-gradient(135deg,#e63946,#b71c1c);

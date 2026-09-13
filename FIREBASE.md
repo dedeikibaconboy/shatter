@@ -1,9 +1,10 @@
 # Firebase saja (tanpa Google Sheet)
 
-Created by Muhammad Rizky Azri Mulyana
+Created by Muhammad Rizky Azri Mulyana  
+Situs: https://shatter.silverhawk.web.id
 
-V3.2 memakai **Firebase Realtime Database** untuk semua fitur online:
-daftar room, join, mulai match, skor, bola, bata, paddle.
+V3.3 memakai **Firebase Realtime Database** untuk semua fitur online:
+daftar room, join, mulai match, skor, bola, bata, paddle, GET READY, hasil akhir.
 
 Google Sheet dan Apps Script **tidak dipakai lagi**.
 

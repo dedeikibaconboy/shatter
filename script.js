@@ -444,7 +444,7 @@
     const d = document.createElement('div'); d.textContent = t; return d.innerHTML;
   }
   function hideOverlays(except) {
-    ['pause-overlay', 'level-up', 'game-over', 'life-splash'].forEach((id) => {
+    ['pause-overlay', 'level-up', 'game-over', 'life-splash', 'guide-overlay', 'credits-overlay'].forEach((id) => {
       if (except && id === except) return;
       const el = document.getElementById(id);
       if (el) el.classList.add('hidden');
@@ -517,31 +517,48 @@
   }
 
   const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-  function playTone(freq, duration, type = 'square', volume = 0.07) {
+  const masterGain = audioCtx.createGain();
+  masterGain.gain.value = 1;
+  masterGain.connect(audioCtx.destination);
+  function unlockAudio() {
     if (audioCtx.state === 'suspended') audioCtx.resume();
+  }
+  document.addEventListener('pointerdown', unlockAudio, { passive: true });
+  document.addEventListener('keydown', unlockAudio);
+  function playTone(freq, duration, type = 'square', volume = 0.22) {
+    unlockAudio();
     try {
       const osc = audioCtx.createOscillator();
       const gain = audioCtx.createGain();
-      osc.type = type; osc.frequency.value = freq;
-      gain.gain.setValueAtTime(volume, audioCtx.currentTime);
-      gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + duration);
-      osc.connect(gain); gain.connect(audioCtx.destination);
-      osc.start(); osc.stop(audioCtx.currentTime + duration);
+      const filter = audioCtx.createBiquadFilter();
+      filter.type = 'lowpass';
+      filter.frequency.value = 4800;
+      osc.type = type;
+      osc.frequency.value = freq;
+      const v = Math.min(0.5, volume);
+      gain.gain.setValueAtTime(v, audioCtx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + Math.max(0.04, duration));
+      osc.connect(filter);
+      filter.connect(gain);
+      gain.connect(masterGain);
+      osc.start();
+      osc.stop(audioCtx.currentTime + duration);
     } catch (e) {}
   }
-  const sfxPaddle = () => playTone(220, 0.06);
+  const sfxPaddle = () => playTone(220, 0.09, 'square', 0.32);
   function sfxBrick(brick) {
     const hard = Number((brick && (brick.maxHp || brick.points)) || 10);
     if (hard >= 30) {
-      [392, 523, 659, 784].forEach((f, i) => setTimeout(() => playTone(f, 0.16, i ? 'triangle' : 'square', 0.07 + i * 0.015), i * 55));
+      [392, 523, 659, 784].forEach((f, i) => setTimeout(() => playTone(f, 0.18, i ? 'triangle' : 'square', 0.28 + i * 0.04), i * 55));
     } else if (hard >= 20) {
-      [440, 554, 659].forEach((f, i) => setTimeout(() => playTone(f, 0.12, 'triangle', 0.07), i * 45));
+      [440, 554, 659].forEach((f, i) => setTimeout(() => playTone(f, 0.14, 'triangle', 0.28), i * 45));
     } else {
-      playTone(480, 0.07, 'triangle', 0.08);
+      playTone(480, 0.1, 'triangle', 0.3);
+      playTone(720, 0.08, 'sine', 0.16);
     }
   }
-  const sfxWall = () => playTone(180, 0.05, 'sine', 0.04);
-  const sfxLife = () => playTone(120, 0.2, 'sawtooth', 0.08);
+  const sfxWall = () => playTone(180, 0.08, 'sine', 0.24);
+  const sfxLife = () => playTone(120, 0.28, 'sawtooth', 0.3);
 
   async function loadData() {
     try {
@@ -817,16 +834,8 @@
     paddle.y = VH - 28;
     ball.radius = 7;
     ball.speed = fairBallSpeed();
-    if (gameMode === 'shared') {
-      initSharedPaddles(true);
-      serveBallFromTop(true);
-    } else {
-      ball.x = VW / 2;
-      ball.y = paddle.y - ball.radius - 3;
-      const angle = (Math.random() * 0.5 - 0.25) - Math.PI / 2;
-      ball.dx = Math.cos(angle) * ball.speed;
-      ball.dy = Math.sin(angle) * ball.speed;
-    }
+    if (gameMode === 'shared') initSharedPaddles(true);
+    serveBallFromTop(true);
   }
 
   function paddleScaleByAlive(n) {
@@ -1062,7 +1071,7 @@
   }
 
   function spawnParticles(x, y, color) {
-    const n = IS_MOBILE ? 4 : 8;
+    const n = IS_MOBILE ? 8 : 12;
     for (let i = 0; i < n; i++) {
       particles.push({ x, y, dx:(Math.random()-.5)*5, dy:(Math.random()-.5)*5, life:20, maxLife:20, color, size:2 });
     }
@@ -1152,9 +1161,11 @@
           refreshEndMatchBtn();
           serveBallFromTop(true);
         } else {
-          lives--; updateHUD(); sfxLife();
-          if (lives <= 0) { playerFinished(); return; }
-          resetBallAndPaddle();
+          lives--;
+          showLifeLostFX(myNetId, myName, 'Bola jatuh', lives);
+          updateHUD();
+          if (lives <= 0) { endMatch(); return; }
+          serveBallFromTop(true);
         }
         return;
       }
@@ -1320,7 +1331,7 @@
       ctx.fillText(ft.text, sx(ft.x), sy(ft.y));
       ctx.globalAlpha = 1;
     });
-    if (gameMode === 'shared' && readyUntil && Date.now() < readyUntil) {
+    if (readyUntil && Date.now() < readyUntil) {
       const left = readyUntil - Date.now();
       const sec = Math.max(1, Math.ceil(left / 1000));
       const pulse = 0.85 + 0.15 * Math.sin(Date.now() / 120);
@@ -1480,8 +1491,8 @@
     const cheer = document.getElementById('cheer-msg');
     if (kicker) kicker.textContent = iWon ? 'KAMU JUARA' : 'HASIL PERTANDINGAN';
     goTitle.textContent = iWon ? 'JUARA 1' : ('Juara: ' + (top.name || 'Pemain'));
-    gameOverOverlay.classList.add('final-shot', 'playable');
-    gameOverOverlay.classList.remove('loser-view');
+    gameOverOverlay.classList.add('final-shot');
+    gameOverOverlay.classList.remove('loser-view', 'playable');
     const cele = document.getElementById('celebration');
     const podium = document.getElementById('podium');
     if (cele) {
@@ -1505,12 +1516,12 @@
     window._lastShareText = shareResultText(list);
     try {
       if (iWon) {
-        [392,523,659,784,1046,1318].forEach((f,i)=>setTimeout(()=>playTone(f,0.22,'triangle',0.1), i*110));
-        setTimeout(() => playTone(1568, 0.45, 'square', 0.09), 780);
-        setTimeout(() => playTone(1976, 0.35, 'triangle', 0.07), 980);
+        [392,523,659,784,1046,1318].forEach((f,i)=>setTimeout(()=>playTone(f,0.28,'triangle',0.34), i*110));
+        setTimeout(() => playTone(1568, 0.5, 'square', 0.32), 780);
+        setTimeout(() => playTone(1976, 0.4, 'triangle', 0.28), 980);
       } else {
-        [392,494,587,784].forEach((f,i)=>setTimeout(()=>playTone(f,0.2,'triangle',0.08), i*140));
-        setTimeout(() => playTone(880, 0.35, 'sine', 0.07), 620);
+        [392,494,587,784].forEach((f,i)=>setTimeout(()=>playTone(f,0.24,'triangle',0.28), i*140));
+        setTimeout(() => playTone(880, 0.4, 'sine', 0.26), 620);
       }
     } catch(e) {}
     gameOverOverlay.classList.remove('hidden');
@@ -1642,6 +1653,16 @@
     leaveAll();
   };
   if (btnLevelLobby) btnLevelLobby.onclick = leaveAll;
+  const guideOverlay = document.getElementById('guide-overlay');
+  const creditsOverlay = document.getElementById('credits-overlay');
+  const btnGuide = document.getElementById('btn-guide');
+  const btnCredits = document.getElementById('btn-credits');
+  if (btnGuide) btnGuide.onclick = () => { if (guideOverlay) guideOverlay.classList.remove('hidden'); };
+  if (btnCredits) btnCredits.onclick = () => { if (creditsOverlay) creditsOverlay.classList.remove('hidden'); };
+  const btnGuideClose = document.getElementById('btn-guide-close');
+  const btnCreditsClose = document.getElementById('btn-credits-close');
+  if (btnGuideClose) btnGuideClose.onclick = () => { if (guideOverlay) guideOverlay.classList.add('hidden'); };
+  if (btnCreditsClose) btnCreditsClose.onclick = () => { if (creditsOverlay) creditsOverlay.classList.add('hidden'); };
   const btnEndMatch = document.getElementById('btn-end-match');
   if (btnEndMatch) btnEndMatch.onclick = () => {
     if (matchEnded) return;
