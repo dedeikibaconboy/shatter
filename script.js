@@ -219,9 +219,11 @@
     const list = Object.keys(map).map((id) => {
       const p = map[id] || {};
       const mine = roster.find((r) => r.id === id);
-      const keepLocal = isRunning && mine && (
-        isHost || (id === myNetId && gameMode !== 'shared')
-      );
+      let keepLocal = false;
+      if (isRunning && mine) {
+        if (gameMode === 'shared' && isHost) keepLocal = true;
+        else if (id === myNetId) keepLocal = true;
+      }
       return {
         id,
         name: p.name || 'Player',
@@ -243,6 +245,7 @@
     updatePlayersList();
     renderLiveScores();
     refreshWaitBoard();
+    refreshEndMatchBtn();
     if (isMultiplayer && roster.length && roster.every((p) => p.finished)) endMatch();
     if (pendingStartCmd && !isRunning && roster.length >= 2) {
       matchStarted = true;
@@ -423,7 +426,7 @@
     const d = document.createElement('div'); d.textContent = t; return d.innerHTML;
   }
   function hideOverlays(except) {
-    ['pause-overlay', 'level-up', 'game-over', 'life-splash', 'guide-overlay', 'credits-overlay'].forEach((id) => {
+    ['pause-overlay', 'level-up', 'game-over', 'life-splash', ].forEach((id) => {
       if (except && id === except) return;
       const el = document.getElementById(id);
       if (el) el.classList.add('hidden');
@@ -903,6 +906,10 @@
   function alivePlayers() {
     return roster.filter(r => !r.finished && (r.lives == null || r.lives > 0));
   }
+  function leftoverPlayers() {
+    if (isMultiplayer && roster.length) return alivePlayers();
+    return alivePlayers();
+  }
   function nextTurnAfter(id) {
     const list = alivePlayers();
     if (!list.length) return id;
@@ -1032,10 +1039,16 @@
     const btn = document.getElementById('btn-end-match');
     if (!btn) return;
     const alive = alivePlayers();
-    const last = alive[0];
-    const show = !matchEnded && gameMode === 'shared' && isRunning && alive.length === 1 && last &&
+    const leftover = leftoverPlayers();
+    const last = leftover[0];
+    const show = !matchEnded && isRunning && leftover.length === 1 && last &&
       (last.id === myNetId || last.id === 'cpu');
     btn.classList.toggle('hidden', !show);
+    const banner = document.getElementById('turnBanner');
+    if (banner && gameMode !== 'shared') {
+      banner.textContent = show ? 'PEMAIN TERAKHIR · tekan Akhiri' : '';
+      banner.classList.toggle('mine', !!show);
+    }
   }
 
   function spawnParticles(x, y, color) {
@@ -1434,12 +1447,15 @@
   }
   function checkAllFinished() {
     if (!roster.length) return;
-    if (roster.every(p => p.finished)) endMatch();
-    else {
-      goTitle.textContent = 'Menunggu pemain lain...';
-      gameOverOverlay.classList.remove('hidden');
-      refreshWaitBoard();
+    if (roster.every(p => p.finished)) { endMatch(); return; }
+    const left = alivePlayers();
+    if (left.length === 1 && left[0].id === myNetId && isRunning) {
+      refreshEndMatchBtn();
+      return;
     }
+    goTitle.textContent = 'Menunggu pemain lain...';
+    gameOverOverlay.classList.remove('hidden');
+    refreshWaitBoard();
   }
   function shareResultText(list) {
     const top = list[0] || { name: myName, score };
@@ -1612,13 +1628,9 @@
   document.addEventListener('click', function (ev) {
     const t = ev.target && ev.target.closest ? ev.target.closest('button') : null;
     if (!t) return;
-    if (t.id === 'btn-guide') { const el=document.getElementById('guide-overlay'); if (el) el.classList.remove('hidden'); }
-    if (t.id === 'btn-credits') { const el=document.getElementById('credits-overlay'); if (el) el.classList.remove('hidden'); }
-    if (t.id === 'btn-guide-close') { const el=document.getElementById('guide-overlay'); if (el) el.classList.add('hidden'); }
-    if (t.id === 'btn-credits-close') { const el=document.getElementById('credits-overlay'); if (el) el.classList.add('hidden'); }
     if (t.id === 'btn-end-match') {
-      const alive = alivePlayers();
-      if (!matchEnded && gameMode === 'shared' && alive.length === 1 && (alive[0].id === myNetId || alive[0].id === 'cpu')) endMatch();
+      const left = alivePlayers();
+      if (!matchEnded && left.length === 1 && (left[0].id === myNetId || left[0].id === 'cpu')) endMatch();
     }
   });
   const btnShare = document.getElementById('btn-share');
