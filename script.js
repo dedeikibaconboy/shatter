@@ -63,6 +63,9 @@
   let matchStarted = false;
   let gameMode = 'race';
   let lastHitter = null;
+  let turnId = null;
+  let pendingBricks = [];
+  let splashTimer = null;
   let paddles = [];
   let waitPollFast = null;
   let heartbeatTimer = null, roomsPollTimer = null;
@@ -111,7 +114,9 @@
     ball.dx = data.ball.dx; ball.dy = data.ball.dy;
     if (data.ball.speed) ball.speed = data.ball.speed;
     lastHitter = data.lastHitter || lastHitter;
+    if (data.turnId) turnId = data.turnId;
     if (Array.isArray(data.bricks)) bricks = data.bricks;
+    if (Array.isArray(data.pending)) pendingBricks = data.pending;
     if (Array.isArray(data.paddles)) {
       data.paddles.forEach(s => {
         const pad = paddles.find(p => p.id === s.id);
@@ -519,6 +524,7 @@
             });
           }
           if (Array.isArray(data.bricks)) bricks = data.bricks;
+    if (Array.isArray(data.pending)) pendingBricks = data.pending;
           if (Array.isArray(data.roster)) {
             data.roster.forEach(s => {
               const r = roster.find(p => p.id === s.id);
@@ -527,6 +533,7 @@
             renderLiveScores();
           }
           lastHitter = data.lastHitter;
+          if (data.turnId) turnId = data.turnId;
         }
         break;
       case 'score': {
@@ -780,31 +787,83 @@
   function initSharedPaddles(keepX) {
     paddles = roster.map((p, i) => {
       const old = paddles.find(x => x.id === p.id);
-      const onTop = lastHitter && lastHitter === p.id;
       return {
         id: p.id,
         name: p.name,
         color: PADDLE_COLORS[i % PADDLE_COLORS.length],
-        width: 70,
+        width: 64,
         height: 12,
-        x: keepX && old ? old.x : (VW / (roster.length + 1)) * (i + 1) - 35,
-        y: onTop ? 28 : VH - 26,
+        x: keepX && old ? old.x : (VW / (roster.length + 1)) * (i + 1) - 32,
+        y: VH - 26,
         speed: fairPaddleSpeed(),
-        slow: old ? !!old.slow : false
+        slow: false
       };
     });
+    if (!turnId && roster.length) turnId = roster[0].id;
   }
 
-  function bouncePaddleAway(pad) {
-    const leftDist = pad.x;
-    const rightDist = VW - pad.x - pad.width;
-    pad.x = rightDist >= leftDist ? VW - pad.width : 0;
-    paddles.forEach(p => {
-      p.slow = false;
-      p.y = VH - 26;
-    });
-    pad.slow = true;
-    pad.y = 28;
+  function alivePlayers() {
+    return roster.filter(r => !r.finished && (r.lives == null || r.lives > 0));
+  }
+  function nextTurnAfter(id) {
+    const list = alivePlayers();
+    if (!list.length) return id;
+    const i = Math.max(0, list.findIndex(p => p.id === id));
+    return list[(i + 1) % list.length].id;
+  }
+  function currentTurnName() {
+    const p = roster.find(r => r.id === turnId);
+    return p ? p.name : '-';
+  }
+  function nextTurnName() {
+    const nid = nextTurnAfter(turnId);
+    const p = roster.find(r => r.id === nid);
+    return p ? p.name : '-';
+  }
+
+  function sfxDrruit() {
+    [180, 140, 110, 90, 70].forEach((f, i) => setTimeout(() => playTone(f, 0.18, 'sawtooth', 0.07), i * 70));
+  }
+
+  function showLifeSplash(reason, autoHide) {
+    const box = document.getElementById('life-splash');
+    if (!box) return;
+    document.getElementById('splash-title').textContent = autoHide ? 'NYAWA BERKURANG' : 'KAMU TERELIMINASI';
+    document.getElementById('splash-sub').textContent = reason || '';
+    document.getElementById('splash-hint').textContent = autoHide
+      ? 'Hilang 5 detik. Game tetap jalan di belakang.'
+      : 'Menunggu pemain lain selesai. Skor masih update.';
+    renderSplashBoard();
+    box.classList.remove('hidden');
+    if (splashTimer) clearTimeout(splashTimer);
+    if (autoHide) {
+      splashTimer = setTimeout(() => box.classList.add('hidden'), 5000);
+    }
+  }
+  function renderSplashBoard() {
+    const board = document.getElementById('splash-board');
+    if (!board) return;
+    const sorted = roster.slice().sort((a,b)=>(b.score||0)-(a.score||0));
+    board.innerHTML = `<p>Skor kamu: <strong>${score}</strong> · Nyawa: ${'♥'.repeat(Math.max(0,lives)) || 'habis'}</p>` +
+      sorted.map((p,i) => `<p>${i+1}. ${escapeHtml(p.name)} — ${p.score||0} ${'♥'.repeat(Math.max(0,p.lives||0))}</p>`).join('');
+  }
+  function hideLifeSplash() {
+    const box = document.getElementById('life-splash');
+    if (box) box.classList.add('hidden');
+    if (splashTimer) clearTimeout(splashTimer);
+  }
+
+  function applyLifeLoss(playerId, reason) {
+    const r = roster.find(p => p.id === playerId);
+    if (!r) return;
+    r.lives = Math.max(0, (r.lives == null ? 3 : r.lives) - 1);
+    if (r.lives <= 0) r.finished = true;
+    if (playerId === myNetId) {
+      lives = r.lives;
+      showLifeSplash(reason, lives > 0);
+    }
+    updateHUD();
+    sfxLife();
   }
 
   function broadcastWorld() {
@@ -815,7 +874,9 @@
       ball: { x: ball.x, y: ball.y, dx: ball.dx, dy: ball.dy, speed: ball.speed },
       paddles: paddles.map(p => ({ id: p.id, x: p.x, y: p.y, slow: p.slow })),
       lastHitter,
+      turnId,
       bricks: bricks.map(b => ({ x:b.x,y:b.y,width:b.width,height:b.height,color:b.color,hp:b.hp,maxHp:b.maxHp,points:b.points })),
+      pending: pendingBricks.map(b => ({ x:b.x,y:b.y,width:b.width,height:b.height,color:b.color,hp:b.hp,maxHp:b.maxHp,points:b.points, backAt:b.backAt })),
       roster
     };
     sendAll(payload);
@@ -876,8 +937,9 @@
   function moveCpu() {
     const cpu = paddles.find(p => p.id === 'cpu');
     if (!cpu) return;
-    const target = ball.x - cpu.width / 2;
-    const spd = cpu.slow ? fairPaddleSpeed() / 10 : fairPaddleSpeed() * 0.85;
+    const myTurn = turnId === 'cpu';
+    const target = myTurn ? (ball.x - cpu.width / 2) : (ball.x < VW/2 ? VW - cpu.width - 10 : 10);
+    const spd = fairPaddleSpeed() * (myTurn ? 0.9 : 0.55);
     if (Math.abs(target - cpu.x) < spd) cpu.x = target;
     else cpu.x += target > cpu.x ? spd : -spd;
     cpu.x = Math.max(0, Math.min(VW - cpu.width, cpu.x));
@@ -928,15 +990,9 @@
 
       if (ball.y - ball.radius > VH) {
         if (shared) {
-          const saved = lastHitter;
-          roster.forEach(r => {
-            if (r.id === saved) return;
-            r.lives = Math.max(0, (r.lives == null ? 3 : r.lives) - 1);
-            if (r.lives <= 0) r.finished = true;
-            if (r.id === myNetId) lives = r.lives;
-          });
-          updateHUD(); sfxLife();
-          const alive = roster.filter(r => !r.finished && (r.lives || 0) > 0);
+          applyLifeLoss(turnId || myNetId, 'Giliran ' + currentTurnName() + ' terlewat. Bola jatuh.');
+          turnId = nextTurnAfter(turnId);
+          const alive = alivePlayers();
           if (alive.length <= 1) { playerFinished(); return; }
           resetBallAndPaddle();
         } else {
@@ -944,13 +1000,16 @@
           if (lives <= 0) { playerFinished(); return; }
           resetBallAndPaddle();
         }
-        isPaused = true; setTimeout(() => isPaused = false, 350);
         return;
       }
 
       const hitList = shared && paddles.length ? paddles : [paddle];
+      let consumedHit = false;
+      let scoringOwner = turnId;
+      let advanceTurn = false;
       hitList.forEach(pad => {
-        if (ball.y + ball.radius >= pad.y && ball.y + ball.radius <= pad.y + pad.height + 10 && ball.dy > 0 &&
+        if (consumedHit) return;
+        if (ball.y + ball.radius >= pad.y && ball.y + ball.radius <= pad.y + pad.height + 12 && ball.dy > 0 &&
             ball.x >= pad.x && ball.x <= pad.x + pad.width) {
           const hitPos = (ball.x - (pad.x + pad.width/2)) / (pad.width/2);
           const angle = -Math.PI/2 + hitPos * (Math.PI/3);
@@ -961,21 +1020,23 @@
           sfxPaddle();
           if (shared) {
             lastHitter = pad.id || myNetId;
-            bouncePaddleAway(pad);
+            scoringOwner = turnId;
+            if (lastHitter !== turnId) {
+              applyLifeLoss(lastHitter, 'Bukan giliranmu. Giliran ' + currentTurnName());
+            } else {
+              advanceTurn = true;
+            }
           }
+          consumedHit = true;
         }
-        if (shared && ball.dy < 0 && ball.y - ball.radius <= pad.y + pad.height && ball.y >= pad.y - 8 &&
-            ball.x >= pad.x && ball.x <= pad.x + pad.width) {
-          const hitPos = (ball.x - (pad.x + pad.width/2)) / (pad.width/2);
-          const angle = Math.PI/2 + hitPos * (Math.PI/3);
-          ball.speed = fairBallSpeed();
-          ball.dx = Math.cos(angle) * ball.speed;
-          ball.dy = Math.abs(Math.sin(angle) * ball.speed);
-          ball.y = pad.y + pad.height + ball.radius + 1;
-          sfxPaddle();
-          lastHitter = pad.id || myNetId;
-          bouncePaddleAway(pad);
-        }
+      });
+
+      const now = Date.now();
+      pendingBricks = pendingBricks.filter(pb => {
+        if (now < pb.backAt) return true;
+        bricks.push({ x:pb.x,y:pb.y,width:pb.width,height:pb.height,color:pb.color,hp:pb.maxHp||pb.hp||1,maxHp:pb.maxHp||1,points:pb.points });
+        sfxDrruit();
+        return false;
       });
 
       for (let i = bricks.length-1; i >= 0; i--) {
@@ -984,14 +1045,17 @@
           const prevX = ball.x - ball.dx;
           if (prevX < brick.x || prevX > brick.x + brick.width) ball.dx = -ball.dx;
           else ball.dy = -ball.dy;
+          const owner = shared ? (scoringOwner || turnId || lastHitter || myNetId) : myNetId;
           brick.hp--; sfxBrick(brick);
           spawnParticles(brick.x + brick.width/2, brick.y + brick.height/2, brick.color);
           if (brick.hp <= 0) {
-            const owner = (shared && lastHitter) ? lastHitter : myNetId;
+            const rp = roster.find(r => r.id === owner);
             if (shared) {
-              const rp = roster.find(r => r.id === owner);
               if (rp) rp.score += brick.points;
               if (owner === myNetId) score += brick.points;
+              if (lastHitter && lastHitter !== turnId) {
+                pendingBricks.push(Object.assign({}, brick, { backAt: Date.now() + 2000 }));
+              }
             } else {
               score += brick.points;
             }
@@ -1001,6 +1065,7 @@
           break;
         }
       }
+      if (shared && advanceTurn) turnId = nextTurnAfter(scoringOwner || turnId);
       if (bricks.length === 0) { levelComplete(); return; }
       if (shared && (!isMultiplayer || isHost)) {
         worldTick++;
@@ -1022,11 +1087,23 @@
       ctx.fillRect(sx(brick.x), sy(brick.y), sw(brick.width), sh(brick.height));
     });
     if (gameMode === 'shared' && paddles.length) {
+      const blink = Math.sin(Date.now() / 180) > 0;
+      const nid = nextTurnAfter(turnId);
       paddles.forEach(pad => {
+        const isTurn = pad.id === turnId;
+        const isNext = pad.id === nid && pad.id !== turnId;
+        if (isTurn && blink) {
+          ctx.fillStyle = '#fff';
+          ctx.globalAlpha = 0.35;
+          ctx.fillRect(sx(pad.x) - 4, sy(pad.y) - 4, sw(pad.width) + 8, sh(pad.height) + 8);
+          ctx.globalAlpha = 1;
+        }
         ctx.fillStyle = pad.color || '#e63946';
         ctx.fillRect(sx(pad.x), sy(pad.y), sw(pad.width), sh(pad.height));
-        ctx.fillStyle = '#fff';
-        ctx.font = '11px Rajdhani';
+        ctx.font = isTurn ? 'bold 12px Rajdhani' : '11px Rajdhani';
+        if (isTurn && blink) ctx.fillStyle = '#fff';
+        else if (isNext && blink) ctx.fillStyle = '#a7ffeb';
+        else ctx.fillStyle = '#ddd';
         ctx.fillText(pad.name || '', sx(pad.x), sy(pad.y) - 3);
       });
     } else {
@@ -1037,7 +1114,7 @@
     ctx.beginPath(); ctx.arc(sx(ball.x), sy(ball.y), sw(ball.radius), 0, Math.PI*2); ctx.fill();
     ctx.fillStyle = 'rgba(42,157,143,.55)';
     ctx.font = '12px Rajdhani';
-    ctx.fillText('LEVEL ' + (currentLevel+1) + (gameMode==='shared' ? ' · SATU LAPANGAN' : ''), 8, 14);
+    ctx.fillText('LEVEL ' + (currentLevel+1) + (gameMode==='shared' ? (' · GILIRAN ' + currentTurnName()) : ''), 8, 14);
   }
 
   let accTime = 0;
@@ -1060,7 +1137,7 @@
     localStorage.setItem('monmon_name', myName);
     gameMode = selectedMode();
     isMultiplayer = false;
-    lastHitter = null;
+    lastHitter = null; turnId = myNetId; pendingBricks = [];
     lives = settings.lives;
     if (!resumeLevel) { score = 0; currentLevel = 0; }
     if (gameMode === 'shared') {
@@ -1092,9 +1169,12 @@
     showScreen('game');
     myNameHud.textContent = roster.length ? roster.map(p => p.name).join(' vs ') : myName;
     score = 0; lives = settings.lives; currentLevel = 0;
-    lastHitter = null;
+    lastHitter = null; pendingBricks = [];
     roster.forEach(p => { p.score = 0; p.finished = false; p.lives = settings.lives; });
-    if (gameMode === 'shared') initSharedPaddles(false);
+    if (gameMode === 'shared') {
+      turnId = roster[0] ? roster[0].id : myNetId;
+      initSharedPaddles(false);
+    }
     gameOverOverlay.classList.add('hidden');
     levelUpOverlay.classList.add('hidden');
     resizeCanvas(); startLevel(0);
@@ -1135,23 +1215,25 @@
   }
   function endMatch() {
     isRunning = false;
-    goTitle.textContent = 'JUARA!';
+    hideLifeSplash();
+    goTitle.textContent = 'HASIL AKHIR';
+    gameOverOverlay.classList.add('final-shot');
     const cele = document.getElementById('celebration');
     const podium = document.getElementById('podium');
-    if (cele) { cele.classList.remove('hidden'); cele.textContent = '🏆🎉'; }
+    if (cele) { cele.classList.remove('hidden'); cele.textContent = '🏆🎉🔥'; }
     const medals = ['🥇','🥈','🥉'];
     const cls = ['gold','silver','bronze'];
-    if (isMultiplayer && roster.length) {
-      const sorted = roster.slice().sort((a,b)=>b.score-a.score);
-      if (podium) podium.innerHTML = sorted.map((p,i) =>
-        `<div class="podium-row ${cls[i]||''}"><span><span class="rank">${medals[i]||(i+1)+'.'}</span>${escapeHtml(p.name)}</span><strong>${p.score}</strong></div>`
-      ).join('');
-      finalResults.innerHTML = `<div class="winner">${escapeHtml(sorted[0].name)} JUARA 1!</div>`;
-    } else {
-      if (podium) podium.innerHTML = `<div class="podium-row gold"><span>🥇 ${escapeHtml(myName)}</span><strong>${score}</strong></div>`;
-      finalResults.innerHTML = `<p>Score akhir: <strong>${score}</strong></p>`;
-    }
-    try { [523,659,784,1046].forEach((f,i)=>setTimeout(()=>playTone(f,0.22,'triangle',0.1), i*140)); } catch(e) {}
+    const list = (roster.length ? roster : [{name: myName, score, lives}]).slice().sort((a,b)=>(b.score||0)-(a.score||0));
+    if (podium) podium.innerHTML = list.map((p,i) =>
+      `<div class="podium-row ${cls[i]||''}"><span><span class="rank">${medals[i]||(i+1)+'.'}</span>${escapeHtml(p.name)}</span><strong>${p.score||0} poin</strong></div>`
+    ).join('');
+    const top = list[0];
+    finalResults.innerHTML = `<div class="winner">${escapeHtml(top.name)} JUARA 1 · ${top.score||0} POIN</div>
+      <p>Level ${currentLevel+1} · ${list.length} pemain</p>`;
+    try {
+      [523,659,784,1046,1318].forEach((f,i)=>setTimeout(()=>playTone(f,0.28,'triangle',0.11), i*130));
+      setTimeout(() => playTone(1568, 0.4, 'square', 0.08), 700);
+    } catch(e) {}
     gameOverOverlay.classList.remove('hidden');
   }
 

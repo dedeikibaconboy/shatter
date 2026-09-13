@@ -54,7 +54,7 @@
           <div class="mode-pick">
             <span class="mode-label">Mode room</span>
             <label class="check-label"><input type="radio" name="roomPlayMode" value="race" checked /> Balapan (lapangan sendiri)</label>
-            <label class="check-label"><input type="radio" name="roomPlayMode" value="shared" /> Satu lapangan (rebut bola)</label>
+            <label class="check-label"><input type="radio" name="roomPlayMode" value="shared" /> Satu lapangan (bergiliran hit)</label>
           </div>
         </div>
 
@@ -130,6 +130,14 @@
           <p id="level-message"></p>
           <button id="next-level-btn" class="btn primary">LANJUT</button>
           <button id="btn-level-lobby" class="btn secondary">Kembali ke Lobby</button>
+        </div>
+      </div>
+      <div id="life-splash" class="overlay splash-soft hidden">
+        <div class="overlay-content splash-card">
+          <h2 id="splash-title">NYAWA BERKURANG</h2>
+          <p id="splash-sub"></p>
+          <div id="splash-board"></div>
+          <p class="splash-hint" id="splash-hint">Permainan tetap jalan di belakang</p>
         </div>
       </div>
       <div id="game-over" class="overlay hidden">

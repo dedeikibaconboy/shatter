@@ -140,3 +140,21 @@ input[type="text"]:focus { border-color:var(--red); }
 .podium-row.bronze { border:1px solid #cd7f32; }
 .rank { font-family: Orbitron, sans-serif; color: var(--green-bright); margin-right: 8px; }
 .wait-lives { color:#e63946; font-size: 12px; }
+
+.splash-soft {
+  background: rgba(0,0,0,.45);
+  pointer-events: none;
+}
+.splash-soft .splash-card {
+  pointer-events: none;
+  background: rgba(12,12,12,.82);
+  border: 2px solid var(--red);
+  max-width: 92%;
+}
+.splash-hint { color:#888; font-size:12px; margin-top:8px; }
+.glow-name { color: #fff; text-shadow: 0 0 8px #00e676, 0 0 14px #e63946; }
+#game-over.final-shot .overlay-content {
+  background: linear-gradient(160deg,#1a1208,#0a0a0a 55%,#10201c);
+  border-color: #ffd700;
+  box-shadow: 0 0 24px rgba(255,215,0,.25);
+}
