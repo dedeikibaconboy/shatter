@@ -41,6 +41,10 @@
           <button id="btn-solo" class="btn secondary">Main Sendiri</button>
           <button id="btn-create" class="btn primary">Buat Room</button>
         </div>
+        <div class="btn-group">
+          <button id="btn-guide" class="btn secondary" type="button">Cara Main</button>
+          <button id="btn-credits" class="btn secondary" type="button">Kredit</button>
+        </div>
         <p class="solo-hint" id="soloHint">Main Sendiri memakai mode di bawah. Balapan = sendirian. Satu lapangan = lawan CPU.</p>
 
         <div class="options-box">
@@ -117,6 +121,7 @@
             <span class="label">NYAWA</span>
             <span id="lives">♥ ♥ ♥</span>
             <button type="button" id="btn-quit-game" class="quit-btn">Pause</button>
+            <button type="button" id="btn-end-match" class="end-match-btn hidden">Akhiri</button>
           </div>
         </header>
         <canvas id="gameCanvas"></canvas>
@@ -149,9 +154,10 @@
       </div>
       <div id="game-over" class="overlay hidden">
         <div class="overlay-content celebration-card">
-          <p class="champ-kicker">MONMON SHATTER</p>
+          <p class="champ-kicker" id="champ-kicker">MONMON SHATTER</p>
           <h2 id="go-title">HASIL AKHIR</h2>
           <div id="celebration" class="celebration hidden">🏆</div>
+          <p class="cheer-msg" id="cheer-msg"></p>
           <div id="podium"></div>
           <div id="final-results"></div>
           <p class="share-site">shatter.silverhawk.web.id</p>
@@ -164,6 +170,31 @@
       </div>
     </div>
   </div>
+
+    <div id="guide-overlay" class="overlay modal-fixed hidden">
+      <div class="overlay-content guide-card">
+        <h2>CARA MAIN</h2>
+        <div class="guide-body">
+          <p><strong>Tujuan.</strong> Pecahkan bata, kumpulkan skor, jaga nyawa.</p>
+          <p><strong>Kontrol.</strong> Geser layar atau panah kiri/kanan.</p>
+          <p><strong>Balapan.</strong> Tiap pemain lapangan sendiri.</p>
+          <p><strong>Satu lapangan.</strong> Satu bola, bergiliran. Raket giliran lebih besar.</p>
+          <p><strong>Bola jatuh.</strong> Nyawa pemain giliran -1, lalu GET READY 3 detik.</p>
+          <p><strong>Pukul bukan giliran.</strong> Nyawa -1. Skor bata ke pemilik giliran.</p>
+          <p><strong>Pemain terakhir.</strong> Tidak otomatis selesai. Tekan Akhiri untuk hasil.</p>
+        </div>
+        <button id="btn-guide-close" class="btn primary" type="button">Mengerti</button>
+      </div>
+    </div>
+    <div id="credits-overlay" class="overlay modal-fixed hidden">
+      <div class="overlay-content">
+        <p class="champ-kicker">TITLE CREDIT</p>
+        <h2>MONMON SHATTER</h2>
+        <p>Created by<br><strong>Muhammad Rizky Azri Mulyana</strong></p>
+        <p class="share-site">shatter.silverhawk.web.id</p>
+        <button id="btn-credits-close" class="btn primary" type="button">Tutup</button>
+      </div>
+    </div>
   <script src="config.js"></script>
   <script src="script.js"></script>
 </body>

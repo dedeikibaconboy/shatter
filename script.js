@@ -47,7 +47,7 @@
   let gameData = null, settings = null;
   let currentLevel = 0, score = 0, lives = 3, bricks = [];
   let paddle = { x: 0, y: 0, width: 90, height: 14, speed: 8 };
-  let ball = { x: 0, y: 0, radius: 8, dx: 0, dy: 0, speed: 5.2 };
+  let ball = { x: 0, y: 0, radius: 8, dx: 0, dy: 0, speed: 5.2, spin: 0, rot: 0 };
   let rightPressed = false, leftPressed = false;
   let isRunning = false, isPaused = false, animationId = null;
   let particles = [];
@@ -85,6 +85,7 @@
   let pendingStartCmd = false;
   let readyUntil = 0;
   const SITE_URL = 'https://shatter.silverhawk.web.id';
+  let matchEnded = false;
 
   let fbDb = null, fbReady = false;
   let fbWorldUnsub = null, fbPadUnsub = null, fbCmdUnsub = null, fbPlayerUnsub = null, fbLobbyUnsub = null;
@@ -326,7 +327,17 @@
         isRunning = true;
       }
       if (v.restart && matchStarted) {
+        matchEnded = false;
         startMultiplayerMatch();
+      }
+      if (v.gameOver && !matchEnded) {
+        if (Array.isArray(v.results)) {
+          v.results.forEach((row) => {
+            const r = roster.find((p) => p.id === row.id);
+            if (r) { r.score = row.score; r.lives = row.lives; r.finished = true; }
+          });
+        }
+        endMatch();
       }
     });
     fbCmdUnsub = () => base.child('cmd').off('value', cmdH);
@@ -412,7 +423,7 @@
     const d = document.createElement('div'); d.textContent = t; return d.innerHTML;
   }
   function hideOverlays(except) {
-    ['pause-overlay', 'level-up', 'game-over', 'life-splash'].forEach((id) => {
+    ['pause-overlay', 'level-up', 'game-over', 'life-splash', 'guide-overlay', 'credits-overlay'].forEach((id) => {
       if (except && id === except) return;
       const el = document.getElementById(id);
       if (el) el.classList.add('hidden');
@@ -1014,7 +1025,17 @@
     const me = roster.find(p => p.id === myNetId);
     if (me) { me.score = score; me.lives = lives; }
     renderLiveScores();
+    refreshEndMatchBtn();
     if (isMultiplayer) writeMyPlayer({ score, lives, finished: lives <= 0 });
+  }
+  function refreshEndMatchBtn() {
+    const btn = document.getElementById('btn-end-match');
+    if (!btn) return;
+    const alive = alivePlayers();
+    const last = alive[0];
+    const show = !matchEnded && gameMode === 'shared' && isRunning && alive.length === 1 && last &&
+      (last.id === myNetId || last.id === 'cpu');
+    btn.classList.toggle('hidden', !show);
   }
 
   function spawnParticles(x, y, color) {
@@ -1041,10 +1062,13 @@
 
   function moveCpu() {
     const cpu = paddles.find(p => p.id === 'cpu');
-    if (!cpu) return;
-    const myTurn = turnId === 'cpu';
+    if (!cpu || cpu.dead) return;
+    const aliveNow = alivePlayers();
+    const onlyCpu = aliveNow.length === 1 && aliveNow[0].id === 'cpu';
+    if (onlyCpu) turnId = 'cpu';
+    const myTurn = turnId === 'cpu' || onlyCpu;
     const target = myTurn ? (ball.x - cpu.width / 2) : (ball.x < VW/2 ? VW - cpu.width - 10 : 10);
-    const spd = fairPaddleSpeed() * (myTurn ? 0.9 : 0.55);
+    const spd = fairPaddleSpeed() * (onlyCpu ? 1.2 : (myTurn ? 0.9 : 0.55));
     if (Math.abs(target - cpu.x) < spd) cpu.x = target;
     else cpu.x += target > cpu.x ? spd : -spd;
     cpu.x = Math.max(0, Math.min(VW - cpu.width, cpu.x));
@@ -1094,6 +1118,7 @@
     if (simulate && !(readyUntil && Date.now() < readyUntil)) {
       ball.x += ball.dx * step;
       ball.y += ball.dy * step;
+      ball.rot = (ball.rot || 0) + (ball.spin || 0);
       if (ball.x - ball.radius < 0) { ball.x = ball.radius; ball.dx = Math.abs(ball.dx); sfxWall(); emitNetFx('wall'); }
       else if (ball.x + ball.radius > VW) { ball.x = VW - ball.radius; ball.dx = -Math.abs(ball.dx); sfxWall(); emitNetFx('wall'); }
       if (ball.y - ball.radius < 0) { ball.y = ball.radius; ball.dy = Math.abs(ball.dy); sfxWall(); emitNetFx('wall'); }
@@ -1101,8 +1126,10 @@
       if (ball.y - ball.radius > VH) {
         if (shared) {
           applyLifeLoss(turnId || myNetId, 'Bola jatuh · giliran ' + currentTurnName());
-          setTurn(nextTurnAfter(turnId));
-          if (alivePlayers().length <= 1) { endMatch(); return; }
+          const still = alivePlayers();
+          if (!still.length) { endMatch(); return; }
+          setTurn(still.length === 1 ? still[0].id : nextTurnAfter(turnId));
+          refreshEndMatchBtn();
           serveBallFromTop(true);
         } else {
           lives--; updateHUD(); sfxLife();
@@ -1135,13 +1162,14 @@
             ball.y = pad.y - ball.radius - 1;
             scoringOwner = turnId;
             consumedHit = true;
-            if (alivePlayers().length <= 1) { endMatch(); return; }
+            refreshEndMatchBtn();
             return;
           }
           const hitPos = (ball.x - (pad.x + pad.width/2)) / (pad.width/2);
           const angle = -Math.PI/2 + hitPos * (Math.PI/3);
           ball.speed = fairBallSpeed();
-          ball.dx = Math.cos(angle) * ball.speed;
+          ball.spin = hitPos * 0.25;
+          ball.dx = Math.cos(angle) * ball.speed + ball.spin * 1.1;
           ball.dy = Math.sin(angle) * ball.speed;
           ball.y = pad.y - ball.radius - 1;
           sfxPaddle();
@@ -1263,6 +1291,17 @@
     }
     ctx.fillStyle = '#2a9d8f';
     ctx.beginPath(); ctx.arc(sx(ball.x), sy(ball.y), sw(ball.radius), 0, Math.PI*2); ctx.fill();
+    try {
+      const br = sw(ball.radius || 8), bx = sx(ball.x || 0), by = sy(ball.y || 0);
+      if (br > 0 && isFinite(br) && isFinite(bx) && isFinite(by)) {
+        ctx.save();
+        ctx.translate(bx, by);
+        ctx.rotate(ball.rot || 0);
+        ctx.fillStyle = '#0a2e2a';
+        ctx.fillRect(-br, -br * 0.16, br * 2, br * 0.32);
+        ctx.restore();
+      }
+    } catch (e) {}
     ctx.fillStyle = 'rgba(42,157,143,.55)';
     ctx.font = '12px Rajdhani';
     ctx.fillText('LEVEL ' + (currentLevel+1), 8, 14);
@@ -1321,6 +1360,7 @@
       roster = [];
       myNameHud.textContent = myName;
     }
+    matchEnded = false;
     bumpStat('plays');
     showScreen('game');
     hideOverlays();
@@ -1336,6 +1376,7 @@
       roomStatusEl.textContent = 'Belum ada lawan yang terhubung.';
       return;
     }
+    matchEnded = false;
     bumpStat('plays');
     writeLobbyMeta();
     showScreen('game');
@@ -1405,24 +1446,45 @@
     return `${top.name} juara Monmon Shatter — ${top.score || 0} poin!\nMain bareng di ${SITE_URL}`;
   }
   function endMatch() {
+    if (matchEnded) return;
+    matchEnded = true;
     isRunning = false;
     readyUntil = 0;
     hideOverlays('game-over');
-    const list = (roster.length ? roster : [{name: myName, score, lives}]).slice().sort((a,b)=>(b.score||0)-(a.score||0));
+    const list = (roster.length ? roster : [{id: myNetId, name: myName, score, lives}]).slice().sort((a,b)=>(b.score||0)-(a.score||0));
     const top = list[0] || { name: myName, score };
-    goTitle.textContent = (top.name || 'Pemain') + ' JUARA';
+    const myIndex = Math.max(0, list.findIndex((p) => p.id === myNetId));
+    const myRank = list.length ? myIndex + 1 : 1;
+    const iWon = myRank === 1;
+    const kicker = document.getElementById('champ-kicker');
+    const cheer = document.getElementById('cheer-msg');
+    if (kicker) kicker.textContent = iWon ? 'KAMU JUARA' : 'HASIL PERTANDINGAN';
+    goTitle.textContent = iWon ? 'JUARA 1' : ('Juara: ' + (top.name || 'Pemain'));
     gameOverOverlay.classList.add('final-shot');
     const cele = document.getElementById('celebration');
     const podium = document.getElementById('podium');
     if (cele) { cele.classList.remove('hidden'); cele.textContent = '🏆🎉🔥'; }
+    if (cheer) {
+      cheer.textContent = iWon
+        ? ('Selamat ' + myName + '!')
+        : ('Kamu urutan ke-' + myRank + ' dari ' + list.length + '. Tetap semangat, main lagi!');
+    }
     const medals = ['🥇','🥈','🥉'];
     const cls = ['gold','silver','bronze'];
     if (podium) podium.innerHTML = list.map((p,i) =>
-      `<div class="podium-row ${cls[i]||''}"><span><span class="rank">${medals[i]||(i+1)+'.'}</span>${escapeHtml(p.name)}</span><strong>${p.score||0} poin · ${'♥'.repeat(Math.max(0, p.lives||0)) || 'habis'}</strong></div>`
+      `<div class="podium-row ${cls[i]||''}${p.id===myNetId?' you':''}"><span><span class="rank">${medals[i]||(i+1)+'.'}</span>${escapeHtml(p.name)}${p.id===myNetId?' (Kamu)':''}</span><strong>${p.score||0} poin</strong></div>`
     ).join('');
-    finalResults.innerHTML = `<div class="winner">${escapeHtml(top.name)} · ${top.score||0} POIN</div>
+    if (finalResults) finalResults.innerHTML = `<div class="winner">${escapeHtml(top.name)} · ${top.score||0} POIN</div>
       <p>Level ${currentLevel+1} · ${list.length} pemain</p>`;
     window._lastShareText = shareResultText(list);
+    const endBtn = document.getElementById('btn-end-match');
+    if (endBtn) endBtn.classList.add('hidden');
+    if (isMultiplayer && fbReady && fbDb && roomCode) {
+      fbDb.ref(fbRoomPath() + '/cmd').set({
+        gameOver: true, t: Date.now(),
+        results: list.map((p) => ({ id:p.id, name:p.name, score:p.score||0, lives:p.lives||0, finished:true, host:!!p.host }))
+      }).catch(()=>{});
+    }
     try {
       [392,523,659,784,1046,1318].forEach((f,i)=>setTimeout(()=>playTone(f,0.22,'triangle',0.1), i*110));
       setTimeout(() => playTone(1568, 0.45, 'square', 0.09), 780);
@@ -1547,6 +1609,18 @@
     leaveAll();
   };
   if (btnLevelLobby) btnLevelLobby.onclick = leaveAll;
+  document.addEventListener('click', function (ev) {
+    const t = ev.target && ev.target.closest ? ev.target.closest('button') : null;
+    if (!t) return;
+    if (t.id === 'btn-guide') { const el=document.getElementById('guide-overlay'); if (el) el.classList.remove('hidden'); }
+    if (t.id === 'btn-credits') { const el=document.getElementById('credits-overlay'); if (el) el.classList.remove('hidden'); }
+    if (t.id === 'btn-guide-close') { const el=document.getElementById('guide-overlay'); if (el) el.classList.add('hidden'); }
+    if (t.id === 'btn-credits-close') { const el=document.getElementById('credits-overlay'); if (el) el.classList.add('hidden'); }
+    if (t.id === 'btn-end-match') {
+      const alive = alivePlayers();
+      if (!matchEnded && gameMode === 'shared' && alive.length === 1 && (alive[0].id === myNetId || alive[0].id === 'cpu')) endMatch();
+    }
+  });
   const btnShare = document.getElementById('btn-share');
   if (btnShare) btnShare.onclick = async () => {
     const text = window._lastShareText || ('Main Monmon Shatter di ' + SITE_URL);
