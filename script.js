@@ -47,7 +47,7 @@
   let gameData = null, settings = null;
   let currentLevel = 0, score = 0, lives = 3, bricks = [];
   let paddle = { x: 0, y: 0, width: 90, height: 14, speed: 8 };
-  let ball = { x: 0, y: 0, radius: 8, dx: 0, dy: 0, speed: 5.2, spin: 0, angle: 0 };
+  let ball = { x: 0, y: 0, radius: 8, dx: 0, dy: 0, speed: 5.2, spin: 0, rot: 0 };
   let rightPressed = false, leftPressed = false;
   let isRunning = false, isPaused = false, animationId = null;
   let particles = [];
@@ -196,8 +196,6 @@
     ball.x = data.ball.x; ball.y = data.ball.y;
     ball.dx = data.ball.dx; ball.dy = data.ball.dy;
     if (data.ball.speed) ball.speed = data.ball.speed;
-    if (data.ball.spin != null) ball.spin = data.ball.spin;
-    if (data.ball.angle != null) ball.angle = data.ball.angle;
     lastHitter = data.lastHitter || lastHitter;
     if (data.turnId) setTurn(data.turnId);
     if (data.bricks) bricks = unpackBricks(data.bricks);
@@ -928,8 +926,6 @@
     const jitter = Math.random() * 0.5 - 0.25;
     ball.dx = Math.sin(jitter) * ball.speed;
     ball.dy = Math.abs(Math.cos(jitter) * ball.speed);
-    ball.spin = jitter * 0.5;
-    ball.angle = 0;
     broadcastWorld(true);
   }
 
@@ -1053,7 +1049,7 @@
     if (!force && now - lastFbWorldWrite < 70) return;
     lastFbWorldWrite = now;
     fbDb.ref(fbRoomPath() + '/world').set({
-      ball: { x: ball.x, y: ball.y, dx: ball.dx, dy: ball.dy, speed: ball.speed, spin: ball.spin || 0, angle: ball.angle || 0 },
+      ball: { x: ball.x, y: ball.y, dx: ball.dx, dy: ball.dy, speed: ball.speed },
       lastHitter,
       turnId,
       level: currentLevel,
@@ -1121,13 +1117,13 @@
   function moveCpu() {
     const cpu = paddles.find(p => p.id === 'cpu');
     if (!cpu || cpu.dead) return;
-    const onlyCpu = alivePlayers().length === 1 && alivePlayers()[0].id === 'cpu';
-    if (onlyCpu && turnId !== 'cpu') turnId = 'cpu';
+    const alive = alivePlayers();
+    const onlyCpu = alive.length === 1 && alive[0].id === 'cpu';
+    if (onlyCpu) turnId = 'cpu';
     const myTurn = turnId === 'cpu' || onlyCpu;
-    cpu._px = cpu.x;
-    const lead = ball.dx * (onlyCpu ? 8 : 4);
+    const lead = onlyCpu ? ball.dx * 6 : 0;
     const target = myTurn ? (ball.x + lead - cpu.width / 2) : (ball.x < VW/2 ? VW - cpu.width - 10 : 10);
-    const spd = fairPaddleSpeed() * (onlyCpu ? 1.25 : (myTurn ? 0.95 : 0.55));
+    const spd = fairPaddleSpeed() * (onlyCpu ? 1.2 : (myTurn ? 0.95 : 0.55));
     if (Math.abs(target - cpu.x) < spd) cpu.x = target;
     else cpu.x += target > cpu.x ? spd : -spd;
     cpu.x = Math.max(0, Math.min(VW - cpu.width, cpu.x));
@@ -1142,7 +1138,6 @@
     const myPad = shared ? paddles.find(p => p.id === myNetId) : paddle;
     const mySpeed = (myPad && myPad.slow) ? fairPaddleSpeed() / 10 : fairPaddleSpeed();
     if (myPad) {
-      myPad._px = myPad.x;
       if (rightPressed) myPad.x += mySpeed * step;
       if (leftPressed) myPad.x -= mySpeed * step;
       myPad.x = Math.max(0, Math.min(VW - myPad.width, myPad.x));
@@ -1176,20 +1171,15 @@
     if (!simulate && !(readyUntil && Date.now() < readyUntil)) {
       ball.x += ball.dx * step;
       ball.y += ball.dy * step;
-      ball.angle = (ball.angle || 0) + (ball.spin || 0);
+      ball.rot = (ball.rot || 0) + (ball.spin || 0);
     }
     if (simulate && !(readyUntil && Date.now() < readyUntil)) {
       ball.x += ball.dx * step;
       ball.y += ball.dy * step;
-      ball.angle = (ball.angle || 0) + (ball.spin || 0);
-      ball.dx += (ball.spin || 0) * 0.014;
-      ball.spin *= 0.996;
-      const cap = (ball.speed || fairBallSpeed()) * 1.15;
-      if (ball.dx > cap) ball.dx = cap;
-      if (ball.dx < -cap) ball.dx = -cap;
-      if (ball.x - ball.radius < 0) { ball.x = ball.radius; ball.dx = Math.abs(ball.dx); ball.spin *= -0.65; sfxWall(); emitNetFx('wall'); }
-      else if (ball.x + ball.radius > VW) { ball.x = VW - ball.radius; ball.dx = -Math.abs(ball.dx); ball.spin *= -0.65; sfxWall(); emitNetFx('wall'); }
-      if (ball.y - ball.radius < 0) { ball.y = ball.radius; ball.dy = Math.abs(ball.dy); ball.spin *= -0.5; sfxWall(); emitNetFx('wall'); }
+      ball.rot = (ball.rot || 0) + (ball.spin || 0);
+      if (ball.x - ball.radius < 0) { ball.x = ball.radius; ball.dx = Math.abs(ball.dx); sfxWall(); emitNetFx('wall'); }
+      else if (ball.x + ball.radius > VW) { ball.x = VW - ball.radius; ball.dx = -Math.abs(ball.dx); sfxWall(); emitNetFx('wall'); }
+      if (ball.y - ball.radius < 0) { ball.y = ball.radius; ball.dy = Math.abs(ball.dy); sfxWall(); emitNetFx('wall'); }
 
       if (ball.y - ball.radius > VH) {
         if (shared) {
@@ -1227,8 +1217,7 @@
             const hitPos = (ball.x - (pad.x + pad.width/2)) / (pad.width/2);
             const angle = -Math.PI/2 + hitPos * (Math.PI/3);
             ball.speed = fairBallSpeed();
-            ball.spin = hitPos * 0.38 + ((pad.x - (pad._px || pad.x)) * 0.06);
-            ball.dx = Math.cos(angle) * ball.speed + ball.spin * 1.8;
+            ball.dx = Math.cos(angle) * ball.speed;
             ball.dy = Math.sin(angle) * ball.speed;
             ball.y = pad.y - ball.radius - 1;
             scoringOwner = turnId;
@@ -1239,8 +1228,8 @@
           const hitPos = (ball.x - (pad.x + pad.width/2)) / (pad.width/2);
           const angle = -Math.PI/2 + hitPos * (Math.PI/3);
           ball.speed = fairBallSpeed();
-          ball.spin = hitPos * 0.38 + ((pad.x - (pad._px || pad.x)) * 0.06);
-          ball.dx = Math.cos(angle) * ball.speed + ball.spin * 1.8;
+          ball.spin = hitPos * 0.28;
+          ball.dx = Math.cos(angle) * ball.speed + ball.spin * 1.2;
           ball.dy = Math.sin(angle) * ball.speed;
           ball.y = pad.y - ball.radius - 1;
           sfxPaddle();
@@ -1321,11 +1310,7 @@
   }
 
   function draw() {
-    try {
-    if (!canvas || !ctx) return;
-    if (!canvas.width || !canvas.height) resizeCanvas();
     ctx.save();
-    ctx.setTransform(1,0,0,1,0,0);
     if (shakeAmt) {
       ctx.translate((Math.random() - 0.5) * shakeAmt * 2, (Math.random() - 0.5) * shakeAmt * 2);
       shakeAmt *= 0.72;
@@ -1380,47 +1365,23 @@
       ctx.fill();
     });
     ctx.globalAlpha = 1;
-    (function drawBall3d() {
-      const rad = Number(ball && ball.radius);
-      const r = Math.max(3, sw(isFinite(rad) && rad > 0 ? rad : 8));
+    (function () {
+      const rr = Number(ball.radius);
+      const r = Math.max(3, sw(rr > 0 ? rr : 8));
       const cx = sx(ball.x || 0), cy = sy(ball.y || 0);
       if (!isFinite(r) || !isFinite(cx) || !isFinite(cy)) return;
       ctx.save();
-      ctx.fillStyle = 'rgba(0,0,0,.28)';
-      ctx.beginPath();
-      ctx.arc(cx + r * 0.16, cy + r * 0.38, r * 0.72, 0, Math.PI * 2);
-      ctx.fill();
       ctx.translate(cx, cy);
-      ctx.rotate(ball.angle || 0);
-      let g;
-      try {
-        g = ctx.createRadialGradient(-r * 0.32, -r * 0.38, r * 0.08, 0, 0, r);
-        g.addColorStop(0, '#d8fff6');
-        g.addColorStop(0.28, '#3dcfb8');
-        g.addColorStop(0.7, '#1b7c70');
-        g.addColorStop(1, '#06231f');
-      } catch (e) {
-        g = '#2a9d8f';
-      }
-      ctx.fillStyle = g;
+      ctx.rotate(ball.rot || 0);
+      ctx.fillStyle = '#1b7c70';
       ctx.beginPath(); ctx.arc(0, 0, r, 0, Math.PI * 2); ctx.fill();
-      ctx.strokeStyle = 'rgba(6,30,28,.75)';
-      ctx.lineWidth = Math.max(1.4, r * 0.16);
-      ctx.beginPath(); ctx.arc(0, 0, r * 0.58, 0, Math.PI * 2); ctx.stroke();
-      ctx.beginPath(); ctx.moveTo(-r * 0.96, 0); ctx.quadraticCurveTo(0, -r * 0.22, r * 0.96, 0); ctx.stroke();
-      ctx.beginPath(); ctx.moveTo(0, -r * 0.96); ctx.quadraticCurveTo(r * 0.22, 0, 0, r * 0.96); ctx.stroke();
-      ctx.strokeStyle = 'rgba(255,255,255,.28)';
-      ctx.lineWidth = Math.max(1, r * 0.08);
-      ctx.beginPath(); ctx.arc(0, 0, r * 0.82, -2.4, -0.4); ctx.stroke();
+      ctx.fillStyle = '#7fffe0';
+      ctx.beginPath(); ctx.arc(-r * 0.28, -r * 0.28, r * 0.38, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#08332e';
+      ctx.fillRect(-r * 0.92, -r * 0.16, r * 1.84, r * 0.32);
+      ctx.fillStyle = '#c8fff4';
+      ctx.fillRect(-r * 0.92, -r * 0.05, r * 1.84, r * 0.1);
       ctx.restore();
-      try {
-        const hl = ctx.createRadialGradient(cx - r * 0.35, cy - r * 0.4, 0, cx, cy, r);
-        hl.addColorStop(0, 'rgba(255,255,255,.5)');
-        hl.addColorStop(0.22, 'rgba(255,255,255,.12)');
-        hl.addColorStop(1, 'rgba(255,255,255,0)');
-        ctx.fillStyle = hl;
-        ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.fill();
-      } catch (e) {}
     })();
     ctx.fillStyle = 'rgba(42,157,143,.55)';
     ctx.font = '12px Rajdhani';
@@ -1456,32 +1417,25 @@
       flashAmt--;
     }
     ctx.restore();
-    } catch (err) {
-      try { ctx.setTransform(1,0,0,1,0,0); } catch (e2) {}
-      console.warn('draw', err);
-    }
   }
 
   let accTime = 0;
   function loop(ts) {
-    try {
-      const dt = lastTs ? (ts - lastTs) : 16;
-      lastTs = ts;
-      accTime += Math.min(dt, 50);
-      let steps = 0;
-      while (accTime >= 16.67 && steps < 5) {
-        update(16.67);
-        accTime -= 16.67;
-        steps++;
-      }
-      draw();
-    } catch (err) {
-      console.warn('loop', err);
+    const dt = lastTs ? (ts - lastTs) : 16;
+    lastTs = ts;
+    accTime += Math.min(dt, 50);
+    let steps = 0;
+    while (accTime >= 16.67 && steps < 5) {
+      update(16.67);
+      accTime -= 16.67;
+      steps++;
     }
+    draw();
     animationId = requestAnimationFrame(loop);
   }
 
   function startSolo(resumeLevel) {
+    try {
     myName = getPlayerName();
     localStorage.setItem('monmon_name', myName);
     gameMode = selectedMode();
@@ -1508,6 +1462,10 @@
     startLevel(currentLevel);
     isRunning = true; isPaused = false; lastTs = 0;
     if (!animationId) animationId = requestAnimationFrame(loop);
+    } catch (err) {
+      console.warn('startSolo', err);
+      showScreen('lobby');
+    }
   }
 
   function startMultiplayerMatch() {
