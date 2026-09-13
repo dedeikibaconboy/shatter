@@ -1,8 +1,10 @@
 # Monmon Shatter Online
 
-**Multiplayer Brick Breaker**  
+**Multiplayer Brick Breaker — V3.1 (revisi UI/UX)**  
 Created by **Muhammad Rizky Azri Mulyana**  
 Brand Colors: Red • Green • Black
+
+Perbaikan V3.1: HUD skor lebih kebaca, tombol Pause, overlay tidak bertumpuk, opsi room dipisah dari Main Sendiri, aturan mode ditampilkan, Main Lagi reset dari awal, status koneksi lebih ramah, peerId dikirim setelah PeerJS siap. Setelah update, deploy ulang Apps Script (New version) supaya heartbeat bisa menyimpan peerId.
 
 ## Fitur
 - Main sendiri atau tanding online

@@ -87,8 +87,8 @@
   function setConnStatus(sheetOk) {
     const el = document.getElementById('connStatus');
     if (!el) return;
-    const sh = sheetOk === false ? 'Sheet: error' : (apiBase() ? 'Sheet: siap' : 'Sheet: belum');
-    const fb = fbReady ? 'Firebase: siap' : (fbEnabled() ? 'Firebase: menghubungkan' : 'Firebase: belum');
+    const sh = sheetOk === false ? 'Server error' : (apiBase() ? 'Server online' : 'Server belum siap');
+    const fb = fbReady ? 'Sinkron siap' : (fbEnabled() ? 'Menghubungkan…' : 'Mode dasar');
     el.textContent = sh + ' · ' + fb;
   }
 
@@ -266,10 +266,19 @@
   function escapeHtml(t) {
     const d = document.createElement('div'); d.textContent = t; return d.innerHTML;
   }
+  function hideOverlays(except) {
+    ['pause-overlay', 'level-up', 'game-over', 'life-splash'].forEach((id) => {
+      if (except && id === except) return;
+      const el = document.getElementById(id);
+      if (el) el.classList.add('hidden');
+    });
+    if (except !== 'life-splash' && splashTimer) clearTimeout(splashTimer);
+  }
   function showScreen(name) {
     lobbyEl.classList.add('hidden');
     roomEl.classList.add('hidden');
     gameScreenEl.classList.add('hidden');
+    if (name !== 'game') hideOverlays();
     if (name === 'lobby') lobbyEl.classList.remove('hidden');
     if (name === 'room') roomEl.classList.remove('hidden');
     if (name === 'game') gameScreenEl.classList.remove('hidden');
@@ -298,16 +307,16 @@
   }
 
   async function pollRoomState() {
-    if (!roomCode || !apiBase() || isRunning) return;
+    if (!roomCode || !apiBase()) return;
     try {
       const data = await apiGet('roomstate', { roomId: roomCode });
       if (!data.ok) return;
       if (typeof data.allowGuestStart === 'boolean') allowGuestStart = data.allowGuestStart;
-      if (data.gameMode) gameMode = data.gameMode;
+      if (data.gameMode && !isRunning) gameMode = data.gameMode;
       applySheetRoster(data.roster);
       refreshWaitBoard();
       setConnStatus(true);
-      if (data.status === 'playing' && !matchStarted && roster.length >= 2) {
+      if (!isRunning && data.status === 'playing' && !matchStarted && roster.length >= 2) {
         matchStarted = true;
         startMultiplayerMatch();
       }
@@ -322,7 +331,8 @@
       apiGet('heartbeat', {
         roomId: roomCode,
         status: isRunning ? 'playing' : 'waiting',
-        players: Math.max(1, roster.length)
+        players: Math.max(1, roster.length),
+        peerId: myPeerId || ''
       }).catch(() => {});
       pollRoomState();
     };
@@ -492,11 +502,34 @@
     renderLiveScores();
   }
 
+  function modeLabel() {
+    return gameMode === 'shared' ? 'Satu lapangan' : 'Balapan';
+  }
+  function updateModeLabels() {
+    const chip = document.getElementById('roomModeChip');
+    const badge = document.getElementById('modeBadge');
+    const help = document.getElementById('modeHelp');
+    const hint = document.getElementById('soloHint');
+    const shared = selectedMode() === 'shared';
+    if (chip) chip.textContent = roomCode ? ('Mode: ' + modeLabel()) : '';
+    if (badge) badge.textContent = isRunning || !gameScreenEl.classList.contains('hidden') ? modeLabel() : '';
+    if (help) {
+      help.textContent = shared
+        ? 'Giliran memukul bergantian. Pukul bola saat bukan giliranmu = peringatan, lalu nyawa berkurang. Bola jatuh = nyawa pemain yang sedang giliran.'
+        : 'Tiap pemain main di lapangannya sendiri. Yang skornya paling tinggi menang.';
+    }
+    if (hint) {
+      hint.textContent = shared
+        ? 'Main Sendiri di mode ini = lawan CPU di satu lapangan.'
+        : 'Main Sendiri di mode ini = brick breaker klasik, lapangan sendiri.';
+    }
+  }
   function renderLiveScores() {
-    if (!isMultiplayer) { liveScoresEl.textContent = ''; return; }
+    if (!roster.length) { liveScoresEl.textContent = ''; return; }
     liveScoresEl.innerHTML = roster.map(p => {
       const heart = '♥'.repeat(Math.max(0, p.lives != null ? p.lives : 0));
-      return `${escapeHtml(p.name)} ${p.score} ${heart || '✗'}`;
+      const you = p.id === myNetId ? ' •' : '';
+      return `${escapeHtml(p.name)}${you} ${p.score} ${heart || '✗'}`;
     }).join('<br>');
   }
 
@@ -638,6 +671,13 @@
       copyCodeInput.value = custom;
     }
 
+    const p = makePeer();
+    p.on('open', (id) => { myPeerId = id; });
+    p.on('connection', (c) => {
+      if (roster.length >= MAX_PLAYERS) { c.close(); return; }
+      bindConn(c, true);
+    });
+
     async function finishHostRoom(id, peerId) {
       roomCode = id;
       displayRoomCode.textContent = id;
@@ -655,6 +695,7 @@
       await fbResetRoom();
       startHeartbeat();
       setConnStatus();
+      updateModeLabels();
       roomStatusEl.textContent = 'Menunggu pemain join...';
     }
 
@@ -662,6 +703,14 @@
       if (!apiBase()) {
         roomStatusEl.textContent = 'Isi config.js dulu.';
         return;
+      }
+      roomStatusEl.textContent = 'Menyiapkan koneksi...';
+      if (!myPeerId) {
+        await new Promise((resolve) => {
+          const t = setTimeout(resolve, 4500);
+          if (peer) peer.on('open', (id) => { myPeerId = id; clearTimeout(t); resolve(); });
+          else { clearTimeout(t); resolve(); }
+        });
       }
       roomStatusEl.textContent = 'Mendaftarkan room...';
       try {
@@ -688,13 +737,6 @@
         roomStatusEl.textContent = 'Server Google sedang lambat. Jika guest sudah masuk room ini, klik Keluar lalu Join pakai kode yang sama. Atau buat room lagi.';
       }
     })();
-
-    const p = makePeer();
-    p.on('open', (id) => { myPeerId = id; });
-    p.on('connection', (c) => {
-      if (roster.length >= MAX_PLAYERS) { c.close(); return; }
-      bindConn(c, true);
-    });
   }
 
   function joinRoom() {
@@ -736,6 +778,7 @@
         if (!joined.ok) { roomStatusEl.textContent = joined.error || 'Gagal join'; return; }
         if (joined.roster) applySheetRoster(joined.roster);
         startHeartbeat();
+        updateModeLabels();
       } catch (e) {
         roomStatusEl.textContent = 'Gagal cek room. Deploy ulang script.';
         return;
@@ -1252,8 +1295,8 @@
     }
     if (apiBase()) apiGet('play').then(setStats).catch(()=>{});
     showScreen('game');
-    gameOverOverlay.classList.add('hidden');
-    levelUpOverlay.classList.add('hidden');
+    hideOverlays();
+    updateModeLabels();
     resizeCanvas();
     startLevel(currentLevel);
     isRunning = true; isPaused = false; lastTs = 0;
@@ -1275,8 +1318,8 @@
       turnId = roster[0] ? roster[0].id : myNetId;
       initSharedPaddles(false);
     }
-    gameOverOverlay.classList.add('hidden');
-    levelUpOverlay.classList.add('hidden');
+    hideOverlays();
+    updateModeLabels();
     resizeCanvas(); startLevel(0);
     isRunning = true; isPaused = false; lastTs = 0;
     if (!animationId) animationId = requestAnimationFrame(loop);
@@ -1284,6 +1327,7 @@
 
   function levelComplete() {
     isRunning = false;
+    hideOverlays('level-up');
     if (currentLevel >= gameData.levels.length - 1) playerFinished();
     else {
       levelMessage.textContent = `Level ${currentLevel+1} selesai! Score: ${score}`;
@@ -1315,7 +1359,7 @@
   }
   function endMatch() {
     isRunning = false;
-    hideLifeSplash();
+    hideOverlays('game-over');
     goTitle.textContent = 'HASIL AKHIR';
     gameOverOverlay.classList.add('final-shot');
     const cele = document.getElementById('celebration');
@@ -1423,7 +1467,7 @@
         goTitle.textContent = 'Menunggu host...';
         gameOverOverlay.classList.remove('hidden');
       }
-    } else startSolo(true);
+    } else startSolo();
   };
   backLobbyBtn.onclick = leaveAll;
   const pauseOverlay = document.getElementById('pause-overlay');
@@ -1431,10 +1475,15 @@
   const btnResume = document.getElementById('btn-resume');
   const btnPauseLobby = document.getElementById('btn-pause-lobby');
   const btnLevelLobby = document.getElementById('btn-level-lobby');
-  if (btnQuitGame) btnQuitGame.onclick = () => {
+  function openPause() {
+    if (gameScreenEl.classList.contains('hidden')) return;
+    if (!gameOverOverlay.classList.contains('hidden')) return;
+    if (!levelUpOverlay.classList.contains('hidden')) return;
     isPaused = true;
+    hideLifeSplash();
     if (pauseOverlay) pauseOverlay.classList.remove('hidden');
-  };
+  }
+  if (btnQuitGame) btnQuitGame.onclick = openPause;
   if (btnResume) btnResume.onclick = () => {
     if (pauseOverlay) pauseOverlay.classList.add('hidden');
     isPaused = false;
@@ -1465,8 +1514,12 @@
       sessionStorage.removeItem('monmon_visited');
       playerNameInput.value = '';
       playerNameInput.focus();
-      alert('Data lokal dihapus. Ketik nama baru lalu main.');
+      playerNameInput.placeholder = 'Nama baru...';
     };
+    document.querySelectorAll('input[name="roomPlayMode"]').forEach((el) => {
+      el.addEventListener('change', updateModeLabels);
+    });
+    updateModeLabels();
     if (apiBase()) {
       if (!sessionStorage.getItem('monmon_visited')) {
         sessionStorage.setItem('monmon_visited', '1');
@@ -1479,11 +1532,16 @@
       apiWarnEl.classList.remove('hidden');
     }
   }
-  document.addEventListener('contextmenu', (e) => e.preventDefault());
   document.addEventListener('keydown', (e) => {
-    const k = e.key.toLowerCase();
-    if (e.ctrlKey && (k === 'u' || k === 's')) e.preventDefault();
-    if (k === 'f12') e.preventDefault();
+    if (e.key !== 'Escape') return;
+    if (gameScreenEl.classList.contains('hidden')) return;
+    if (!gameOverOverlay.classList.contains('hidden')) return;
+    if (pauseOverlay && !pauseOverlay.classList.contains('hidden')) {
+      pauseOverlay.classList.add('hidden');
+      isPaused = false;
+    } else {
+      openPause();
+    }
   });
 
   init();

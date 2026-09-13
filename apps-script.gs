@@ -172,6 +172,7 @@ function doGet(e) {
       rooms.getRange(row, 6).setValue(String(nowMs()));
       if (p.status) rooms.getRange(row, 5).setValue(String(p.status).substring(0, 20));
       if (p.players) rooms.getRange(row, 8).setValue(Math.min(MAX_PLAYERS, Number(p.players) || 1));
+      if (p.peerId && String(p.peerId) !== '-') rooms.getRange(row, 3).setValue(String(p.peerId).substring(0, 80));
       return jsonOut({ ok: true });
     }
 
