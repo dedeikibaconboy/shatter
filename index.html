@@ -167,7 +167,7 @@
     </div>
   </div>
 
-  <!-- Chat: floating button + slide panel (modern Discord/Slack style) -->
+  <!-- Chat: floating button + slide panel -->
   <button type="button" id="chatFab" class="chat-fab hidden" title="Chat online" aria-label="Buka chat">
     <span class="chat-fab-icon">💬</span>
     <span id="chatBadge" class="chat-badge hidden">0</span>
@@ -182,12 +182,12 @@
       <button type="button" id="chatClose" class="chat-close" aria-label="Tutup">×</button>
     </div>
     <div id="chatOnlineView" class="chat-view">
-      <p class="chat-hint">Pemain yang sudah isi nama & online. Klik nama untuk chat privat.</p>
+      <p class="chat-hint">Klik nama untuk mulai chat. Penerima bisa blokir / jadikan rekan DM setelah 2 pesan.</p>
       <div id="onlineList" class="online-list"><p class="muted">Memuat…</p></div>
     </div>
     <div id="chatRoomsView" class="chat-view hidden">
       <div class="chat-room-actions">
-        <button type="button" id="btnCreateChatRoom" class="btn primary small">+ Buat Ruang Chat</button>
+        <button type="button" id="btnCreateChatRoom" class="btn primary small">+ Buat Ruang</button>
       </div>
       <div id="chatRoomsList" class="online-list"><p class="muted">Belum ada ruang.</p></div>
     </div>
@@ -201,18 +201,32 @@
           <strong id="chatThreadName">Chat</strong>
           <span id="chatThreadMeta" class="chat-thread-meta"></span>
         </div>
-        <button type="button" id="chatLockBtn" class="chat-lock-btn hidden" title="Kunci ruang">🔒</button>
+        <button type="button" id="chatMoreBtn" class="chat-more-btn hidden" title="Opsi">⋮</button>
       </div>
+      <div id="chatMembersStrip" class="chat-members-strip hidden"></div>
+      <div id="chatDmActions" class="chat-dm-actions hidden"></div>
       <div id="chatMessages" class="chat-messages"></div>
+      <div id="chatPeekBanner" class="chat-peek-banner hidden"></div>
       <div id="chatJoinGate" class="chat-join-gate hidden">
         <p id="chatJoinQuestion"></p>
-        <input type="text" id="chatJoinAnswer" placeholder="Jawaban…" maxlength="80" />
+        <p id="chatHelloLeft" class="chat-hello-left"></p>
+        <input type="text" id="chatJoinAnswer" placeholder="Sapa / jawaban…" maxlength="80" />
         <input type="password" id="chatJoinPass" class="hidden" placeholder="Password ruang" maxlength="32" />
-        <button type="button" id="btnRequestJoin" class="btn primary small">Minta Bergabung</button>
+        <button type="button" id="btnRequestJoin" class="btn primary small">Sapa / Minta Gabung</button>
       </div>
       <div id="chatRequestsBox" class="chat-requests hidden"></div>
+      <div id="chatApproveOpts" class="chat-approve-opts hidden">
+        <p class="approve-title">Opsi sebelum izinkan</p>
+        <label class="check-label"><input type="checkbox" id="optSeeHistory" checked /> Bisa lihat riwayat chat</label>
+        <label class="check-label"><input type="checkbox" id="optCanInvite" /> Bisa undang / izinkan orang lain</label>
+        <div class="btn-group">
+          <button type="button" id="btnConfirmApprove" class="btn primary small">Izinkan</button>
+          <button type="button" id="btnCancelApprove" class="btn secondary small">Batal</button>
+        </div>
+      </div>
       <div class="chat-compose">
-        <input type="text" id="chatInput" placeholder="Ketik pesan…" maxlength="280" autocomplete="off" />
+        <button type="button" id="chatPasteBtn" class="chat-icon-btn" title="Tempel screenshot">🖼️</button>
+        <input type="text" id="chatInput" placeholder="Ketik pesan… (Ctrl+V screenshot)" maxlength="280" autocomplete="off" />
         <button type="button" id="chatSend" class="btn primary small">Kirim</button>
       </div>
     </div>
@@ -233,6 +247,17 @@
       </div>
     </div>
   </div>
+
+  <div id="chatMenuModal" class="chat-modal hidden">
+    <div class="chat-modal-card">
+      <h3 id="chatMenuTitle">Opsi ruang</h3>
+      <div id="chatMenuBody"></div>
+      <button type="button" id="btnCloseMenu" class="btn secondary">Tutup</button>
+    </div>
+  </div>
+
+  <div id="chatToast" class="chat-toast hidden"></div>
+
 
   <script src="config.js"></script>
   <script src="script.js"></script>

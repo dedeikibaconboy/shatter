@@ -1,26 +1,44 @@
 # Monmon Shatter Online
 
-**Multiplayer Brick Breaker — V3.3.9+Chat**  
+**Multiplayer Brick Breaker — V3.4 Chat UX**  
 Created by **Muhammad Rizky Azri Mulyana**
 
-Online sepenuhnya lewat Firebase Realtime Database.
-Tidak perlu Google Sheet atau Apps Script.
+## Chat UX (v2)
 
-## Fitur baru
-- **Animasi & suara bata hancur** disamakan (solo = multiplayer), partikel sekarang benar-benar digambar.
-- **Solo Satu lapangan vs CPU**: setelah pemain kehabisan nyawa, CPU tetap bermain dan raketnya mengejar bola (tidak diam).
-- **Chat online** (gaya Discord/Slack side panel):
-  - Daftar pemain online + negara/wilayah
-  - Chat privat (DM) 1:1 realtime
-  - Ruang chat grup: password opsional, kunci ruang, permintaan join + pertanyaan, approve/tolak manual
-  - Ruang/DM otomatis dihapus dari database setelah **1 hari** tidak aktif (hemat kuota)
-  - Riwayat pesan dibatasi (~40 terakhir)
+### Soft DM
+1. User A klik nama User B → mulai kirim pesan
+2. Setelah **2 pesan** dari A, User B bisa:
+   - **Blokir**
+   - **Biarkan lanjut**
+   - **Jadikan Rekan DM** (privat, user lain tidak bisa baca)
+
+### Rekan DM → Ruang
+- Tombol **Buat Ruang dari DM** (nama default: `NamaA & NamaB`)
+- Hanya anggota yang bisa baca isi
+
+### Peek & join ruang
+1. User C klik ruang di list → **collapse** daftar anggota
+2. Anggota dalam (A/B) dapat **notif toast** + banner “C melihat ruang”
+3. C bisa **sapa maks 2×** (isi chat tetap tersembunyi)
+4. Saat **Izinkan**, pilih opsi:
+   - Bisa lihat riwayat chat?
+   - Bisa undang / izinkan orang lain?
+
+### Hak owner
+- Hapus ruang, keluarkan anggota
+- Beri hak ke user lain: approve, invite, kick, manage
+
+### Screenshot ringan
+- Ctrl+V / tombol 🖼️ → kompres JPEG kecil
+- **Auto-hapus dari database ~45 detik**
+
+### Hemat DB
+- Pesan max ~40/room
+- Room/DM idle > 24 jam dihapus otomatis
 
 ## Setup
-Baca FIREBASE.md:
-1. Nyalakan Realtime Database
-2. Nyalakan Anonymous Auth
-3. Publish rules dari **database.rules.json** (sudah termasuk `presence` + `chats`)
-4. Pastikan config.js berisi config Firebase
+1. Nyalakan Realtime Database + Anonymous Auth
+2. Publish **database.rules.json** (ada `presence` + `chats`)
+3. Isi `config.js`
 
-Tanpa Firebase, Main Sendiri tetap jalan (chat & online list butuh Firebase).
+Tanpa Firebase, Main Sendiri tetap jalan.
