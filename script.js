@@ -174,8 +174,7 @@
     if (ev.type === 'paddle') sfxPaddle();
     else if (ev.type === 'wall') sfxWall();
     else if (ev.type === 'brick') {
-      sfxBrick({ points: ev.points, maxHp: ev.maxHp });
-      if (ev.x != null) spawnParticles(ev.x, ev.y, ev.color || '#e63946');
+      burstBrick(ev.x || VW/2, ev.y || 80, ev.color || '#e63946', !!ev.dead, { points: ev.points, maxHp: ev.maxHp });
     } else if (ev.type === 'life') {
       showLifeLostFX(ev.who, ev.name, ev.reason, ev.lives);
       if (ev.who === myNetId && ev.lives != null) {
@@ -559,6 +558,27 @@
   }
   const sfxWall = () => playTone(180, 0.08, 'sine', 0.24);
   const sfxLife = () => playTone(120, 0.28, 'sawtooth', 0.3);
+  let shakeAmt = 0, flashAmt = 0;
+  function burstBrick(x, y, color, destroyed, brick) {
+    sfxBrick(brick || { points: destroyed ? 20 : 10 });
+    const n = destroyed ? 18 : 10;
+    for (let i = 0; i < n; i++) {
+      const ang = (Math.PI * 2 * i) / n + Math.random() * 0.4;
+      const spd = (destroyed ? 3.2 : 2) + Math.random() * 3;
+      particles.push({
+        x, y,
+        dx: Math.cos(ang) * spd,
+        dy: Math.sin(ang) * spd,
+        life: destroyed ? 30 : 18,
+        maxLife: destroyed ? 30 : 18,
+        color: color || '#e63946',
+        size: destroyed ? 3.4 : 2.2
+      });
+    }
+    shakeAmt = destroyed ? 7 : 3.5;
+    flashAmt = destroyed ? 10 : 5;
+    if (destroyed) spawnFloat(x, y, '+', color || '#ffd166');
+  }
 
   async function loadData() {
     try {
@@ -630,7 +650,7 @@
   }
   function refreshWaitBoard() {
     if (!gameOverOverlay || gameOverOverlay.classList.contains('hidden')) return;
-    if (!isMultiplayer) return;
+    if (!isMultiplayer || !finalResults) return;
     finalResults.innerHTML = roster.map((p) => {
       const heart = '♥'.repeat(Math.max(0, Number(p.lives || 0)));
       const mark = p.finished ? '✓' : '▶';
@@ -1230,14 +1250,15 @@
           if (prevX < brick.x || prevX > brick.x + brick.width) ball.dx = -ball.dx;
           else ball.dy = -ball.dy;
           const owner = shared ? (scoringOwner || turnId || lastHitter || myNetId) : myNetId;
-          brick.hp--; sfxBrick(brick);
-          spawnParticles(brick.x + brick.width/2, brick.y + brick.height/2, brick.color);
+          brick.hp--;
+          burstBrick(brick.x + brick.width/2, brick.y + brick.height/2, brick.color, brick.hp <= 0, brick);
           emitNetFx('brick', {
             x: brick.x + brick.width / 2,
             y: brick.y + brick.height / 2,
             color: brick.color,
             points: brick.points,
-            maxHp: brick.maxHp
+            maxHp: brick.maxHp,
+            dead: brick.hp <= 0
           });
           if (brick.hp <= 0) {
             const rp = roster.find(r => r.id === owner);
@@ -1279,6 +1300,12 @@
   }
 
   function draw() {
+    ctx.save();
+    if (shakeAmt) {
+      ctx.translate((Math.random() - 0.5) * shakeAmt * 2, (Math.random() - 0.5) * shakeAmt * 2);
+      shakeAmt *= 0.72;
+      if (shakeAmt < 0.35) shakeAmt = 0;
+    }
     ctx.fillStyle = '#0c0c0c';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
     bricks.forEach(brick => {
@@ -1319,6 +1346,15 @@
       ctx.fillStyle = '#e63946';
       ctx.fillRect(sx(paddle.x), sy(paddle.y), sw(paddle.width), sh(paddle.height));
     }
+    particles.forEach((pt) => {
+      ctx.globalAlpha = Math.max(0, pt.life / (pt.maxLife || 20));
+      ctx.fillStyle = pt.color || '#fff';
+      const r = Math.max(2, sw(pt.size || 2.4));
+      ctx.beginPath();
+      ctx.arc(sx(pt.x), sy(pt.y), r, 0, Math.PI * 2);
+      ctx.fill();
+    });
+    ctx.globalAlpha = 1;
     ctx.fillStyle = '#2a9d8f';
     ctx.beginPath(); ctx.arc(sx(ball.x), sy(ball.y), sw(ball.radius), 0, Math.PI*2); ctx.fill();
     ctx.fillStyle = 'rgba(42,157,143,.55)';
@@ -1349,6 +1385,12 @@
       ctx.fillText(String(sec), sx(VW / 2), sy(VH * 0.56));
       ctx.restore();
     }
+    if (flashAmt) {
+      ctx.fillStyle = 'rgba(255,255,255,' + (0.10 * flashAmt / 10) + ')';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      flashAmt--;
+    }
+    ctx.restore();
   }
 
   let accTime = 0;
@@ -1511,8 +1553,7 @@
     if (podium) podium.innerHTML = list.map((p,i) =>
       `<div class="podium-row ${cls[i]||''}${p.id===myNetId?' you':''}"><span><span class="rank">${medals[i]||(i+1)+'.'}</span>${escapeHtml(p.name)}${p.id===myNetId?' (Kamu)':''}</span><strong>${p.score||0} poin</strong></div>`
     ).join('');
-    finalResults.innerHTML = `<div class="winner">${escapeHtml(top.name)} · ${top.score||0} POIN</div>
-      <p>Level ${currentLevel+1} · ${list.length} pemain</p>`;
+    if (finalResults) finalResults.innerHTML = '';
     window._lastShareText = shareResultText(list);
     try {
       if (iWon) {
@@ -1653,6 +1694,28 @@
     leaveAll();
   };
   if (btnLevelLobby) btnLevelLobby.onclick = leaveAll;
+  document.addEventListener('click', (ev) => {
+    const t = ev.target && ev.target.closest ? ev.target.closest('button') : null;
+    if (!t || !t.id) return;
+    if (t.id === 'btn-guide') {
+      ev.preventDefault();
+      const el = document.getElementById('guide-overlay');
+      if (el) el.classList.remove('hidden');
+    }
+    if (t.id === 'btn-credits') {
+      ev.preventDefault();
+      const el = document.getElementById('credits-overlay');
+      if (el) el.classList.remove('hidden');
+    }
+    if (t.id === 'btn-guide-close') {
+      const el = document.getElementById('guide-overlay');
+      if (el) el.classList.add('hidden');
+    }
+    if (t.id === 'btn-credits-close') {
+      const el = document.getElementById('credits-overlay');
+      if (el) el.classList.add('hidden');
+    }
+  });
   const guideOverlay = document.getElementById('guide-overlay');
   const creditsOverlay = document.getElementById('credits-overlay');
   const btnGuide = document.getElementById('btn-guide');
