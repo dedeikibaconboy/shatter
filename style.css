@@ -181,3 +181,5 @@ input[type="text"]:focus { border-color:var(--red); }
 #level-up.overlay, #game-over.overlay.waiting {
   background: rgba(0,0,0,.35);
 }
+
+.conn-status{font-size:12px;color:#888;margin:6px 0 0;text-align:center;}

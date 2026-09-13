@@ -61,6 +61,7 @@
   let roomRequiresCode = false, allowGuestStart = false;
   let roster = [];
   let matchStarted = false;
+  let roomBornAt = 0;
   let gameMode = 'race';
   let lastHitter = null;
   let turnId = null;
@@ -82,6 +83,13 @@
 
   function apiBase() {
     return String(window.MONMON_API || '').trim().replace(/\/$/, '');
+  }
+  function setConnStatus(sheetOk) {
+    const el = document.getElementById('connStatus');
+    if (!el) return;
+    const sh = sheetOk === false ? 'Sheet: error' : (apiBase() ? 'Sheet: siap' : 'Sheet: belum');
+    const fb = fbReady ? 'Firebase: siap' : (fbEnabled() ? 'Firebase: menghubungkan' : 'Firebase: belum');
+    el.textContent = sh + ' · ' + fb;
   }
 
   let fbDb = null, fbReady = false;
@@ -113,6 +121,7 @@
   }
 
   function applyWorldState(data) {
+    if (!matchStarted) return;
     if (!data || !data.ball) return;
     ball.x = data.ball.x; ball.y = data.ball.y;
     ball.dx = data.ball.dx; ball.dy = data.ball.dy;
@@ -153,6 +162,14 @@
     }
   }
 
+  function fbResetRoom() {
+    if (!fbReady || !fbDb || !roomCode) return Promise.resolve();
+    return fbDb.ref(fbRoomPath()).update({
+      cmd: { start: false, t: Date.now() },
+      world: null
+    }).catch(()=>{});
+  }
+
   function fbStartRoomSync() {
     if (!fbReady || !fbDb || !roomCode) return;
     fbStop();
@@ -178,7 +195,8 @@
     const cmdH = base.child('cmd').on('value', (snap) => {
       const v = snap.val();
       if (!v) return;
-      if (v.start && !matchStarted && roster.length >= 2) {
+      const fresh = !v.t || v.t >= (roomBornAt - 1500);
+      if (v.start && fresh && !matchStarted && roster.length >= 2) {
         matchStarted = true;
         startMultiplayerMatch();
       }
@@ -288,6 +306,7 @@
       if (data.gameMode) gameMode = data.gameMode;
       applySheetRoster(data.roster);
       refreshWaitBoard();
+      setConnStatus(true);
       if (data.status === 'playing' && !matchStarted && roster.length >= 2) {
         matchStarted = true;
         startMultiplayerMatch();
@@ -308,7 +327,7 @@
       pollRoomState();
     };
     beat();
-    heartbeatTimer = setInterval(beat, 2000);
+    heartbeatTimer = setInterval(beat, 1200);
   }
   function stopHeartbeat() {
     if (heartbeatTimer) clearInterval(heartbeatTimer);
@@ -462,6 +481,7 @@
     }).join('') || '<p class="muted">Menunggu pemain...</p>';
     const guests = roster.filter(p => !p.host).length;
     btnStartMatch.disabled = !canClickStart();
+    btnStartMatch.textContent = canClickStart() ? 'Mulai' : (guests < 1 ? 'Menunggu lawan' : 'Menunggu host');
     if (guests < 1) {
       roomStatusEl.textContent = 'Menunggu pemain join...';
     } else if (canClickStart()) {
@@ -603,6 +623,7 @@
     allowGuestStart = !!(allowGuestStartEl && allowGuestStartEl.checked);
     gameMode = (document.querySelector('input[name="roomPlayMode"]:checked') || {value:'race'}).value;
     matchStarted = false;
+    roomBornAt = Date.now();
     roster = [{ id: myNetId, name: myName, score: 0, finished: false, host: true }];
 
     showScreen('room');
@@ -630,7 +651,10 @@
         });
         if (joined && joined.roster) applySheetRoster(joined.roster);
       } catch (e) {}
+      await fbInit();
+      await fbResetRoom();
       startHeartbeat();
+      setConnStatus();
       roomStatusEl.textContent = 'Menunggu pemain join...';
     }
 
@@ -683,6 +707,7 @@
     myName = getPlayerName();
     isMultiplayer = true; isHost = false;
     matchStarted = false;
+    roomBornAt = Date.now();
     roster = [];
     roomCode = roomId;
     showScreen('room');
@@ -1361,14 +1386,30 @@
   btnJoin.onclick = () => { if (audioCtx.state==='suspended') audioCtx.resume(); joinRoom(); };
   btnStartMatch.onclick = () => {
     if (!canClickStart()) {
-      roomStatusEl.textContent = 'Tunggu sampai nama lawan muncul di daftar.';
+      roomStatusEl.textContent = roster.length < 2
+        ? 'Tunggu nama lawan muncul di daftar dulu.'
+        : 'Hanya host yang bisa Mulai (atau aktifkan opsi guest).';
       return;
     }
+    roomStatusEl.textContent = 'Memulai pertandingan...';
+    btnStartMatch.disabled = true;
     matchStarted = true;
+    const kick = () => {
+      if (isRunning) return;
+      try {
+        sendAll({ type: 'start' });
+        startMultiplayerMatch();
+      } catch (e) {
+        matchStarted = false;
+        roomStatusEl.textContent = 'Gagal mulai: ' + (e.message || e);
+        btnStartMatch.disabled = !canClickStart();
+      }
+    };
     if (apiBase()) apiGet('startmatch', { roomId: roomCode }).catch(()=>{});
-    if (fbReady && fbDb && roomCode) fbDb.ref(fbRoomPath() + '/cmd').set({ start: true, t: Date.now() }).catch(()=>{});
-    sendAll({ type: 'start' });
-    startMultiplayerMatch();
+    if (fbReady && fbDb && roomCode) {
+      fbDb.ref(fbRoomPath() + '/cmd').set({ start: true, t: Date.now() }).catch(()=>{}).then(kick);
+      setTimeout(() => { if (!isRunning && matchStarted) kick(); }, 400);
+    } else kick();
   };
   btnLeave.onclick = leaveAll;
   nextLevelBtn.onclick = nextLevel;
