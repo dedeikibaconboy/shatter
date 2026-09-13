@@ -47,7 +47,7 @@
   let gameData = null, settings = null;
   let currentLevel = 0, score = 0, lives = 3, bricks = [];
   let paddle = { x: 0, y: 0, width: 90, height: 14, speed: 8 };
-  let ball = { x: 0, y: 0, radius: 8, dx: 0, dy: 0, speed: 5.2 };
+  let ball = { x: 0, y: 0, radius: 8, dx: 0, dy: 0, speed: 5.2, spin: 0, angle: 0 };
   let rightPressed = false, leftPressed = false;
   let isRunning = false, isPaused = false, animationId = null;
   let particles = [];
@@ -196,6 +196,8 @@
     ball.x = data.ball.x; ball.y = data.ball.y;
     ball.dx = data.ball.dx; ball.dy = data.ball.dy;
     if (data.ball.speed) ball.speed = data.ball.speed;
+    if (data.ball.spin != null) ball.spin = data.ball.spin;
+    if (data.ball.angle != null) ball.angle = data.ball.angle;
     lastHitter = data.lastHitter || lastHitter;
     if (data.turnId) setTurn(data.turnId);
     if (data.bricks) bricks = unpackBricks(data.bricks);
@@ -926,6 +928,8 @@
     const jitter = Math.random() * 0.5 - 0.25;
     ball.dx = Math.sin(jitter) * ball.speed;
     ball.dy = Math.abs(Math.cos(jitter) * ball.speed);
+    ball.spin = jitter * 0.5;
+    ball.angle = 0;
     broadcastWorld(true);
   }
 
@@ -1049,7 +1053,7 @@
     if (!force && now - lastFbWorldWrite < 70) return;
     lastFbWorldWrite = now;
     fbDb.ref(fbRoomPath() + '/world').set({
-      ball: { x: ball.x, y: ball.y, dx: ball.dx, dy: ball.dy, speed: ball.speed },
+      ball: { x: ball.x, y: ball.y, dx: ball.dx, dy: ball.dy, speed: ball.speed, spin: ball.spin || 0, angle: ball.angle || 0 },
       lastHitter,
       turnId,
       level: currentLevel,
@@ -1086,7 +1090,9 @@
     const btn = document.getElementById('btn-end-match');
     if (!btn) return;
     const alive = alivePlayers();
-    const show = !matchEnded && gameMode === 'shared' && isRunning && alive.length === 1 && alive[0].id === myNetId;
+    const last = alive[0];
+    const show = !matchEnded && gameMode === 'shared' && isRunning && alive.length === 1 && last &&
+      (last.id === myNetId || last.id === 'cpu');
     btn.classList.toggle('hidden', !show);
   }
 
@@ -1114,10 +1120,14 @@
 
   function moveCpu() {
     const cpu = paddles.find(p => p.id === 'cpu');
-    if (!cpu) return;
-    const myTurn = turnId === 'cpu';
-    const target = myTurn ? (ball.x - cpu.width / 2) : (ball.x < VW/2 ? VW - cpu.width - 10 : 10);
-    const spd = fairPaddleSpeed() * (myTurn ? 0.9 : 0.55);
+    if (!cpu || cpu.dead) return;
+    const onlyCpu = alivePlayers().length === 1 && alivePlayers()[0].id === 'cpu';
+    if (onlyCpu && turnId !== 'cpu') turnId = 'cpu';
+    const myTurn = turnId === 'cpu' || onlyCpu;
+    cpu._px = cpu.x;
+    const lead = ball.dx * (onlyCpu ? 8 : 4);
+    const target = myTurn ? (ball.x + lead - cpu.width / 2) : (ball.x < VW/2 ? VW - cpu.width - 10 : 10);
+    const spd = fairPaddleSpeed() * (onlyCpu ? 1.25 : (myTurn ? 0.95 : 0.55));
     if (Math.abs(target - cpu.x) < spd) cpu.x = target;
     else cpu.x += target > cpu.x ? spd : -spd;
     cpu.x = Math.max(0, Math.min(VW - cpu.width, cpu.x));
@@ -1132,6 +1142,7 @@
     const myPad = shared ? paddles.find(p => p.id === myNetId) : paddle;
     const mySpeed = (myPad && myPad.slow) ? fairPaddleSpeed() / 10 : fairPaddleSpeed();
     if (myPad) {
+      myPad._px = myPad.x;
       if (rightPressed) myPad.x += mySpeed * step;
       if (leftPressed) myPad.x -= mySpeed * step;
       myPad.x = Math.max(0, Math.min(VW - myPad.width, myPad.x));
@@ -1165,19 +1176,27 @@
     if (!simulate && !(readyUntil && Date.now() < readyUntil)) {
       ball.x += ball.dx * step;
       ball.y += ball.dy * step;
+      ball.angle = (ball.angle || 0) + (ball.spin || 0);
     }
     if (simulate && !(readyUntil && Date.now() < readyUntil)) {
       ball.x += ball.dx * step;
       ball.y += ball.dy * step;
-      if (ball.x - ball.radius < 0) { ball.x = ball.radius; ball.dx = Math.abs(ball.dx); sfxWall(); emitNetFx('wall'); }
-      else if (ball.x + ball.radius > VW) { ball.x = VW - ball.radius; ball.dx = -Math.abs(ball.dx); sfxWall(); emitNetFx('wall'); }
-      if (ball.y - ball.radius < 0) { ball.y = ball.radius; ball.dy = Math.abs(ball.dy); sfxWall(); emitNetFx('wall'); }
+      ball.angle = (ball.angle || 0) + (ball.spin || 0);
+      ball.dx += (ball.spin || 0) * 0.014;
+      ball.spin *= 0.996;
+      const cap = (ball.speed || fairBallSpeed()) * 1.15;
+      if (ball.dx > cap) ball.dx = cap;
+      if (ball.dx < -cap) ball.dx = -cap;
+      if (ball.x - ball.radius < 0) { ball.x = ball.radius; ball.dx = Math.abs(ball.dx); ball.spin *= -0.65; sfxWall(); emitNetFx('wall'); }
+      else if (ball.x + ball.radius > VW) { ball.x = VW - ball.radius; ball.dx = -Math.abs(ball.dx); ball.spin *= -0.65; sfxWall(); emitNetFx('wall'); }
+      if (ball.y - ball.radius < 0) { ball.y = ball.radius; ball.dy = Math.abs(ball.dy); ball.spin *= -0.5; sfxWall(); emitNetFx('wall'); }
 
       if (ball.y - ball.radius > VH) {
         if (shared) {
           applyLifeLoss(turnId || myNetId, 'Bola jatuh · giliran ' + currentTurnName());
           const still = alivePlayers();
-          if (still.length) setTurn(still.length === 1 ? still[0].id : nextTurnAfter(turnId));
+          if (!still.length) { endMatch(); return; }
+          setTurn(still.length === 1 ? still[0].id : nextTurnAfter(turnId));
           refreshEndMatchBtn();
           serveBallFromTop(true);
         } else {
@@ -1208,7 +1227,8 @@
             const hitPos = (ball.x - (pad.x + pad.width/2)) / (pad.width/2);
             const angle = -Math.PI/2 + hitPos * (Math.PI/3);
             ball.speed = fairBallSpeed();
-            ball.dx = Math.cos(angle) * ball.speed;
+            ball.spin = hitPos * 0.38 + ((pad.x - (pad._px || pad.x)) * 0.06);
+            ball.dx = Math.cos(angle) * ball.speed + ball.spin * 1.8;
             ball.dy = Math.sin(angle) * ball.speed;
             ball.y = pad.y - ball.radius - 1;
             scoringOwner = turnId;
@@ -1219,7 +1239,8 @@
           const hitPos = (ball.x - (pad.x + pad.width/2)) / (pad.width/2);
           const angle = -Math.PI/2 + hitPos * (Math.PI/3);
           ball.speed = fairBallSpeed();
-          ball.dx = Math.cos(angle) * ball.speed;
+          ball.spin = hitPos * 0.38 + ((pad.x - (pad._px || pad.x)) * 0.06);
+          ball.dx = Math.cos(angle) * ball.speed + ball.spin * 1.8;
           ball.dy = Math.sin(angle) * ball.speed;
           ball.y = pad.y - ball.radius - 1;
           sfxPaddle();
@@ -1355,8 +1376,31 @@
       ctx.fill();
     });
     ctx.globalAlpha = 1;
-    ctx.fillStyle = '#2a9d8f';
-    ctx.beginPath(); ctx.arc(sx(ball.x), sy(ball.y), sw(ball.radius), 0, Math.PI*2); ctx.fill();
+    (function drawBall() {
+      const r = sw(ball.radius);
+      const cx = sx(ball.x), cy = sy(ball.y);
+      ctx.save();
+      ctx.translate(cx, cy);
+      ctx.rotate(ball.angle || 0);
+      ctx.fillStyle = '#2a9d8f';
+      ctx.beginPath(); ctx.arc(0, 0, r, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#08352f';
+      ctx.beginPath(); ctx.arc(0, 0, r * 0.92, -0.55, 0.55); ctx.lineTo(0, 0); ctx.fill();
+      ctx.fillStyle = '#c8fff4';
+      ctx.fillRect(-r * 0.9, -Math.max(1.5, r * 0.18), r * 1.8, Math.max(3, r * 0.36));
+      ctx.restore();
+      ctx.save();
+      ctx.translate(cx, cy);
+      const dir = (ball.spin || 0);
+      if (Math.abs(dir) > 0.02) {
+        ctx.fillStyle = dir > 0 ? '#ffd166' : '#4cc9f0';
+        ctx.font = 'bold ' + Math.max(10, Math.round(r)) + 'px Rajdhani';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(dir > 0 ? '↻' : '↺', r + 10, 0);
+      }
+      ctx.restore();
+    })();
     ctx.fillStyle = 'rgba(42,157,143,.55)';
     ctx.font = '12px Rajdhani';
     ctx.fillText('LEVEL ' + (currentLevel+1), 8, 14);
@@ -1730,7 +1774,7 @@
   if (btnEndMatch) btnEndMatch.onclick = () => {
     if (matchEnded) return;
     const alive = alivePlayers();
-    if (!(gameMode === 'shared' && alive.length === 1 && alive[0].id === myNetId)) return;
+    if (!(gameMode === 'shared' && alive.length === 1 && (alive[0].id === myNetId || alive[0].id === 'cpu'))) return;
     endMatch();
   };
   const btnShare = document.getElementById('btn-share');
