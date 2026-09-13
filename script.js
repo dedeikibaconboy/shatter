@@ -47,7 +47,7 @@
   let gameData = null, settings = null;
   let currentLevel = 0, score = 0, lives = 3, bricks = [];
   let paddle = { x: 0, y: 0, width: 90, height: 14, speed: 8 };
-  let ball = { x: 0, y: 0, radius: 8, dx: 0, dy: 0, speed: 5.2, spin: 0, rot: 0 };
+  let ball = { x: 0, y: 0, radius: 8, dx: 0, dy: 0, speed: 5.2 };
   let rightPressed = false, leftPressed = false;
   let isRunning = false, isPaused = false, animationId = null;
   let particles = [];
@@ -1086,9 +1086,7 @@
     const btn = document.getElementById('btn-end-match');
     if (!btn) return;
     const alive = alivePlayers();
-    const last = alive[0];
-    const show = !matchEnded && gameMode === 'shared' && isRunning && alive.length === 1 && last &&
-      (last.id === myNetId || last.id === 'cpu');
+    const show = !matchEnded && gameMode === 'shared' && isRunning && alive.length === 1 && alive[0].id === myNetId;
     btn.classList.toggle('hidden', !show);
   }
 
@@ -1116,14 +1114,10 @@
 
   function moveCpu() {
     const cpu = paddles.find(p => p.id === 'cpu');
-    if (!cpu || cpu.dead) return;
-    const alive = alivePlayers();
-    const onlyCpu = alive.length === 1 && alive[0].id === 'cpu';
-    if (onlyCpu) turnId = 'cpu';
-    const myTurn = turnId === 'cpu' || onlyCpu;
-    const lead = onlyCpu ? ball.dx * 6 : 0;
-    const target = myTurn ? (ball.x + lead - cpu.width / 2) : (ball.x < VW/2 ? VW - cpu.width - 10 : 10);
-    const spd = fairPaddleSpeed() * (onlyCpu ? 1.2 : (myTurn ? 0.95 : 0.55));
+    if (!cpu) return;
+    const myTurn = turnId === 'cpu';
+    const target = myTurn ? (ball.x - cpu.width / 2) : (ball.x < VW/2 ? VW - cpu.width - 10 : 10);
+    const spd = fairPaddleSpeed() * (myTurn ? 0.9 : 0.55);
     if (Math.abs(target - cpu.x) < spd) cpu.x = target;
     else cpu.x += target > cpu.x ? spd : -spd;
     cpu.x = Math.max(0, Math.min(VW - cpu.width, cpu.x));
@@ -1171,12 +1165,10 @@
     if (!simulate && !(readyUntil && Date.now() < readyUntil)) {
       ball.x += ball.dx * step;
       ball.y += ball.dy * step;
-      ball.rot = (ball.rot || 0) + (ball.spin || 0);
     }
     if (simulate && !(readyUntil && Date.now() < readyUntil)) {
       ball.x += ball.dx * step;
       ball.y += ball.dy * step;
-      ball.rot = (ball.rot || 0) + (ball.spin || 0);
       if (ball.x - ball.radius < 0) { ball.x = ball.radius; ball.dx = Math.abs(ball.dx); sfxWall(); emitNetFx('wall'); }
       else if (ball.x + ball.radius > VW) { ball.x = VW - ball.radius; ball.dx = -Math.abs(ball.dx); sfxWall(); emitNetFx('wall'); }
       if (ball.y - ball.radius < 0) { ball.y = ball.radius; ball.dy = Math.abs(ball.dy); sfxWall(); emitNetFx('wall'); }
@@ -1185,8 +1177,7 @@
         if (shared) {
           applyLifeLoss(turnId || myNetId, 'Bola jatuh · giliran ' + currentTurnName());
           const still = alivePlayers();
-          if (!still.length) { endMatch(); return; }
-          setTurn(still.length === 1 ? still[0].id : nextTurnAfter(turnId));
+          if (still.length) setTurn(still.length === 1 ? still[0].id : nextTurnAfter(turnId));
           refreshEndMatchBtn();
           serveBallFromTop(true);
         } else {
@@ -1228,8 +1219,7 @@
           const hitPos = (ball.x - (pad.x + pad.width/2)) / (pad.width/2);
           const angle = -Math.PI/2 + hitPos * (Math.PI/3);
           ball.speed = fairBallSpeed();
-          ball.spin = hitPos * 0.28;
-          ball.dx = Math.cos(angle) * ball.speed + ball.spin * 1.2;
+          ball.dx = Math.cos(angle) * ball.speed;
           ball.dy = Math.sin(angle) * ball.speed;
           ball.y = pad.y - ball.radius - 1;
           sfxPaddle();
@@ -1365,24 +1355,8 @@
       ctx.fill();
     });
     ctx.globalAlpha = 1;
-    (function () {
-      const rr = Number(ball.radius);
-      const r = Math.max(3, sw(rr > 0 ? rr : 8));
-      const cx = sx(ball.x || 0), cy = sy(ball.y || 0);
-      if (!isFinite(r) || !isFinite(cx) || !isFinite(cy)) return;
-      ctx.save();
-      ctx.translate(cx, cy);
-      ctx.rotate(ball.rot || 0);
-      ctx.fillStyle = '#1b7c70';
-      ctx.beginPath(); ctx.arc(0, 0, r, 0, Math.PI * 2); ctx.fill();
-      ctx.fillStyle = '#7fffe0';
-      ctx.beginPath(); ctx.arc(-r * 0.28, -r * 0.28, r * 0.38, 0, Math.PI * 2); ctx.fill();
-      ctx.fillStyle = '#08332e';
-      ctx.fillRect(-r * 0.92, -r * 0.16, r * 1.84, r * 0.32);
-      ctx.fillStyle = '#c8fff4';
-      ctx.fillRect(-r * 0.92, -r * 0.05, r * 1.84, r * 0.1);
-      ctx.restore();
-    })();
+    ctx.fillStyle = '#2a9d8f';
+    ctx.beginPath(); ctx.arc(sx(ball.x), sy(ball.y), sw(ball.radius), 0, Math.PI*2); ctx.fill();
     ctx.fillStyle = 'rgba(42,157,143,.55)';
     ctx.font = '12px Rajdhani';
     ctx.fillText('LEVEL ' + (currentLevel+1), 8, 14);
@@ -1435,7 +1409,6 @@
   }
 
   function startSolo(resumeLevel) {
-    try {
     myName = getPlayerName();
     localStorage.setItem('monmon_name', myName);
     gameMode = selectedMode();
@@ -1462,10 +1435,6 @@
     startLevel(currentLevel);
     isRunning = true; isPaused = false; lastTs = 0;
     if (!animationId) animationId = requestAnimationFrame(loop);
-    } catch (err) {
-      console.warn('startSolo', err);
-      showScreen('lobby');
-    }
   }
 
   function startMultiplayerMatch() {
@@ -1761,7 +1730,7 @@
   if (btnEndMatch) btnEndMatch.onclick = () => {
     if (matchEnded) return;
     const alive = alivePlayers();
-    if (!(gameMode === 'shared' && alive.length === 1 && (alive[0].id === myNetId || alive[0].id === 'cpu'))) return;
+    if (!(gameMode === 'shared' && alive.length === 1 && alive[0].id === myNetId)) return;
     endMatch();
   };
   const btnShare = document.getElementById('btn-share');
