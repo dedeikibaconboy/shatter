@@ -70,7 +70,7 @@ input[type="text"]:focus { border-color:var(--red); }
 .player-row.host .badge { background:var(--green); }
 .room-status { font-size:14px; color:var(--green); margin-bottom:12px; }
 
-#game-screen { padding:0; align-items:stretch; overflow:hidden; }
+#game-screen { padding:0; align-items:stretch; overflow:hidden; position:relative; }
 #game-container {
   position:relative; width:100%; max-width:520px; height:100dvh; margin:0 auto;
   background:var(--dark); display:flex; flex-direction:column; overflow:hidden;
@@ -99,6 +99,33 @@ input[type="text"]:focus { border-color:var(--red); }
 .overlay { position:absolute; inset:0; background:rgba(0,0,0,.9); display:flex; justify-content:center; align-items:center; z-index:20; }
 #pause-overlay { z-index:30; }
 #game-over { z-index:40; }
+#game-over.playable {
+  align-items:flex-start;
+  justify-content:center;
+  background:linear-gradient(180deg,rgba(0,0,0,.78) 0%,rgba(0,0,0,.28) 52%,rgba(0,0,0,0) 72%);
+  pointer-events:none;
+  padding-top:6px;
+}
+#game-over.playable .celebration-card {
+  pointer-events:auto;
+  transform:scale(.9);
+  transform-origin:top center;
+  margin-top:4px;
+  max-height:58dvh;
+  overflow:auto;
+}
+.end-match-btn {
+  margin-top:4px;
+  background:linear-gradient(135deg,#e63946,#b71c1c);
+  border:none;
+  color:#fff;
+  font-size:10px;
+  padding:5px 8px;
+  border-radius:6px;
+  cursor:pointer;
+  font-family:Orbitron,sans-serif;
+  text-transform:uppercase;
+}
 .overlay-content { text-align:center; padding:24px 18px; max-width:90%; border:2px solid var(--red); border-radius:12px; background:#111; }
 .overlay-content h2 { font-family:'Orbitron',sans-serif; color:var(--red); margin-bottom:10px; }
 #final-results { margin-bottom:16px; }

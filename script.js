@@ -84,6 +84,8 @@
   let lastFxSeq = 0;
   let pendingStartCmd = false;
   let readyUntil = 0;
+  let readySeq = 0;
+  let lastReadySeq = 0;
   let matchEnded = false;
   const SITE_URL = 'https://shatter.silverhawk.web.id';
 
@@ -202,7 +204,16 @@
     if (typeof data.level === 'number' && data.level !== currentLevel && !isHost) {
       currentLevel = data.level;
     }
-    if (data.readyUntil != null) readyUntil = Number(data.readyUntil) || 0;
+    if (!isHost) {
+      const seq = Number(data.readySeq || 0);
+      if (seq && seq !== lastReadySeq) {
+        lastReadySeq = seq;
+        readyUntil = Date.now() + 3000;
+      } else if (!seq) {
+        readyUntil = 0;
+        lastReadySeq = 0;
+      }
+    }
     if (!isHost && Array.isArray(data.fx)) {
       data.fx.forEach((ev) => {
         if (!ev || ev.id == null || ev.id <= lastFxSeq) return;
@@ -870,15 +881,18 @@
     ball.dy = 0;
     ball.speed = fairBallSpeed();
     if (startCountdown !== false) {
+      readySeq += 1;
       readyUntil = Date.now() + 3000;
       emitNetFx('ready');
       broadcastWorld(true);
     } else {
+      readySeq = 0;
       readyUntil = 0;
     }
   }
   function launchReadyBall() {
     readyUntil = 0;
+    readySeq = 0;
     ball.speed = fairBallSpeed();
     const jitter = Math.random() * 0.5 - 0.25;
     ball.dx = Math.sin(jitter) * ball.speed;
@@ -1011,6 +1025,7 @@
       turnId,
       level: currentLevel,
       readyUntil,
+      readySeq,
       bricks: packBricks(bricks),
       pending: packBricks(pendingBricks),
       fx: netFx
@@ -1035,7 +1050,15 @@
     const me = roster.find(p => p.id === myNetId);
     if (me) { me.score = score; me.lives = lives; }
     renderLiveScores();
+    refreshEndMatchBtn();
     if (isMultiplayer) writeMyPlayer({ score, lives, finished: lives <= 0 });
+  }
+  function refreshEndMatchBtn() {
+    const btn = document.getElementById('btn-end-match');
+    if (!btn) return;
+    const alive = alivePlayers();
+    const show = !matchEnded && gameMode === 'shared' && isRunning && alive.length === 1 && alive[0].id === myNetId;
+    btn.classList.toggle('hidden', !show);
   }
 
   function spawnParticles(x, y, color) {
@@ -1073,7 +1096,8 @@
 
   let worldTick = 0;
   function update(dt) {
-    if (!isRunning || isPaused) return;
+    if (isPaused) return;
+    if (!isRunning && !matchEnded) return;
     const step = 1;
     const shared = gameMode === 'shared';
     const myPad = shared ? paddles.find(p => p.id === myNetId) : paddle;
@@ -1099,7 +1123,8 @@
         }
       }
     }
-    if (shared && paddles.some(p => p.id === 'cpu')) moveCpu();
+    if (shared && paddles.some(p => p.id === 'cpu') && !matchEnded) moveCpu();
+    if (matchEnded || !isRunning) return;
 
     const simulate = !shared || !isMultiplayer || isHost;
     if (readyUntil && Date.now() < readyUntil) {
@@ -1122,8 +1147,9 @@
       if (ball.y - ball.radius > VH) {
         if (shared) {
           applyLifeLoss(turnId || myNetId, 'Bola jatuh · giliran ' + currentTurnName());
-          setTurn(nextTurnAfter(turnId));
-          if (alivePlayers().length <= 1) { endMatch(); return; }
+          const still = alivePlayers();
+          if (still.length) setTurn(still.length === 1 ? still[0].id : nextTurnAfter(turnId));
+          refreshEndMatchBtn();
           serveBallFromTop(true);
         } else {
           lives--; updateHUD(); sfxLife();
@@ -1156,7 +1182,7 @@
             ball.y = pad.y - ball.radius - 1;
             scoringOwner = turnId;
             consumedHit = true;
-            if (alivePlayers().length <= 1) { endMatch(); return; }
+            refreshEndMatchBtn();
             return;
           }
           const hitPos = (ball.x - (pad.x + pad.width/2)) / (pad.width/2);
@@ -1295,17 +1321,22 @@
       ctx.globalAlpha = 1;
     });
     if (gameMode === 'shared' && readyUntil && Date.now() < readyUntil) {
-      const sec = Math.max(1, Math.ceil((readyUntil - Date.now()) / 1000));
-      ctx.fillStyle = 'rgba(0,0,0,.35)';
-      ctx.fillRect(sx(40), sy(VH * 0.46), sw(320), sh(70));
+      const left = readyUntil - Date.now();
+      const sec = Math.max(1, Math.ceil(left / 1000));
+      const pulse = 0.85 + 0.15 * Math.sin(Date.now() / 120);
+      ctx.save();
+      ctx.fillStyle = 'rgba(0,0,0,.45)';
+      ctx.fillRect(sx(30), sy(VH * 0.44), sw(340), sh(88));
       ctx.fillStyle = '#b8f2e6';
-      ctx.font = 'bold 22px Orbitron, sans-serif';
       ctx.textAlign = 'center';
-      ctx.fillText('GET READY', sx(VW / 2), sy(VH * 0.51));
+      ctx.font = 'bold 24px Orbitron, sans-serif';
+      ctx.globalAlpha = pulse;
+      ctx.fillText('GET READY', sx(VW / 2), sy(VH * 0.50));
+      ctx.globalAlpha = 1;
       ctx.fillStyle = '#fff';
-      ctx.font = 'bold 28px Orbitron, sans-serif';
+      ctx.font = 'bold 34px Orbitron, sans-serif';
       ctx.fillText(String(sec), sx(VW / 2), sy(VH * 0.56));
-      ctx.textAlign = 'left';
+      ctx.restore();
     }
   }
 
@@ -1449,14 +1480,16 @@
     const cheer = document.getElementById('cheer-msg');
     if (kicker) kicker.textContent = iWon ? 'KAMU JUARA' : 'HASIL PERTANDINGAN';
     goTitle.textContent = iWon ? 'JUARA 1' : ('Juara: ' + (top.name || 'Pemain'));
-    gameOverOverlay.classList.add('final-shot');
-    gameOverOverlay.classList.toggle('loser-view', !iWon);
+    gameOverOverlay.classList.add('final-shot', 'playable');
+    gameOverOverlay.classList.remove('loser-view');
     const cele = document.getElementById('celebration');
     const podium = document.getElementById('podium');
     if (cele) {
       cele.classList.remove('hidden');
-      cele.textContent = iWon ? '🏆🎉🔥' : '💪✨🔥';
+      cele.textContent = '🏆🎉🔥';
     }
+    const endBtn = document.getElementById('btn-end-match');
+    if (endBtn) endBtn.classList.add('hidden');
     if (cheer) {
       cheer.textContent = iWon
         ? ('Selamat ' + myName + '! Skor ' + (list[myIndex] && list[myIndex].score || score) + ' poin.')
@@ -1481,7 +1514,7 @@
       }
     } catch(e) {}
     gameOverOverlay.classList.remove('hidden');
-    if (isHost && isMultiplayer && fbReady && fbDb && roomCode) {
+    if (isMultiplayer && fbReady && fbDb && roomCode) {
       fbDb.ref(fbRoomPath() + '/cmd').set({
         gameOver: true,
         t: Date.now(),
@@ -1609,6 +1642,13 @@
     leaveAll();
   };
   if (btnLevelLobby) btnLevelLobby.onclick = leaveAll;
+  const btnEndMatch = document.getElementById('btn-end-match');
+  if (btnEndMatch) btnEndMatch.onclick = () => {
+    if (matchEnded) return;
+    const alive = alivePlayers();
+    if (!(gameMode === 'shared' && alive.length === 1 && alive[0].id === myNetId)) return;
+    endMatch();
+  };
   const btnShare = document.getElementById('btn-share');
   if (btnShare) btnShare.onclick = async () => {
     const text = window._lastShareText || ('Main Monmon Shatter di ' + SITE_URL);
