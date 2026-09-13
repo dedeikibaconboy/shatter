@@ -76,6 +76,108 @@
   function apiBase() {
     return String(window.MONMON_API || '').trim().replace(/\/$/, '');
   }
+
+  let fbDb = null, fbReady = false;
+  let fbWorldUnsub = null, fbPadUnsub = null, fbCmdUnsub = null;
+  let lastFbWorldWrite = 0, lastFbPadWrite = 0;
+
+  function fbEnabled() {
+    const c = window.MONMON_FIREBASE || {};
+    return !!(c.apiKey && c.databaseURL && window.firebase);
+  }
+
+  async function fbInit() {
+    if (fbReady) return true;
+    if (!fbEnabled()) return false;
+    try {
+      if (!firebase.apps.length) firebase.initializeApp(window.MONMON_FIREBASE);
+      fbDb = firebase.database();
+      await firebase.auth().signInAnonymously();
+      fbReady = true;
+      return true;
+    } catch (e) {
+      console.warn('Firebase gagal', e);
+      return false;
+    }
+  }
+
+  function fbRoomPath() {
+    return 'rooms/' + String(roomCode || 'x').toUpperCase();
+  }
+
+  function applyWorldState(data) {
+    if (!data || !data.ball) return;
+    ball.x = data.ball.x; ball.y = data.ball.y;
+    ball.dx = data.ball.dx; ball.dy = data.ball.dy;
+    if (data.ball.speed) ball.speed = data.ball.speed;
+    lastHitter = data.lastHitter || lastHitter;
+    if (Array.isArray(data.bricks)) bricks = data.bricks;
+    if (Array.isArray(data.paddles)) {
+      data.paddles.forEach(s => {
+        const pad = paddles.find(p => p.id === s.id);
+        if (pad && s.id !== myNetId) {
+          pad.x = s.x; pad.y = s.y; pad.slow = !!s.slow;
+        }
+      });
+    }
+    if (Array.isArray(data.roster)) {
+      data.roster.forEach(s => {
+        const r = roster.find(p => p.id === s.id);
+        if (r) {
+          if (r.id !== myNetId) {
+            r.score = s.score; r.lives = s.lives; r.finished = s.finished;
+          }
+        }
+      });
+      renderLiveScores();
+      refreshWaitBoard();
+    }
+  }
+
+  function fbStop() {
+    try { if (fbWorldUnsub) fbWorldUnsub(); } catch(e){}
+    try { if (fbPadUnsub) fbPadUnsub(); } catch(e){}
+    try { if (fbCmdUnsub) fbCmdUnsub(); } catch(e){}
+    fbWorldUnsub = fbPadUnsub = fbCmdUnsub = null;
+    if (fbDb && roomCode) {
+      try { fbDb.ref(fbRoomPath() + '/pads/' + myNetId).remove(); } catch(e){}
+    }
+  }
+
+  function fbStartRoomSync() {
+    if (!fbReady || !fbDb || !roomCode) return;
+    fbStop();
+    const base = fbDb.ref(fbRoomPath());
+    const worldH = base.child('world').on('value', (snap) => {
+      if (isHost) return;
+      applyWorldState(snap.val());
+    });
+    fbWorldUnsub = () => base.child('world').off('value', worldH);
+    const padH = base.child('pads').on('value', (snap) => {
+      const v = snap.val() || {};
+      Object.keys(v).forEach((id) => {
+        if (id === myNetId) return;
+        const pad = paddles.find(p => p.id === id);
+        if (pad && v[id] && typeof v[id].x === 'number') {
+          pad.x = v[id].x;
+          if (v[id].y != null) pad.y = v[id].y;
+          pad.slow = !!v[id].slow;
+        }
+      });
+    });
+    fbPadUnsub = () => base.child('pads').off('value', padH);
+    const cmdH = base.child('cmd').on('value', (snap) => {
+      const v = snap.val();
+      if (!v) return;
+      if (v.start && !matchStarted && roster.length >= 2) {
+        matchStarted = true;
+        startMultiplayerMatch();
+      }
+    });
+    fbCmdUnsub = () => base.child('cmd').off('value', cmdH);
+  }
+
+
   function apiJsonp(action, extra) {
     return new Promise((resolve, reject) => {
       const base = apiBase();
@@ -185,6 +287,7 @@
   }
 
   function startHeartbeat() {
+    fbStartRoomSync();
     stopHeartbeat();
     const beat = () => {
       if (!roomCode || !apiBase()) return;
@@ -707,14 +810,22 @@
   function broadcastWorld() {
     if (gameMode !== 'shared') return;
     if (isMultiplayer && !isHost) return;
-    sendAll({
+    const payload = {
       type: 'world',
       ball: { x: ball.x, y: ball.y, dx: ball.dx, dy: ball.dy, speed: ball.speed },
       paddles: paddles.map(p => ({ id: p.id, x: p.x, y: p.y, slow: p.slow })),
       lastHitter,
       bricks: bricks.map(b => ({ x:b.x,y:b.y,width:b.width,height:b.height,color:b.color,hp:b.hp,maxHp:b.maxHp,points:b.points })),
       roster
-    });
+    };
+    sendAll(payload);
+    if (fbReady && fbDb && roomCode) {
+      const now = Date.now();
+      if (now - lastFbWorldWrite >= 80) {
+        lastFbWorldWrite = now;
+        fbDb.ref(fbRoomPath() + '/world').set(payload).catch(()=>{});
+      }
+    }
   }
 
   function startLevel(idx) {
@@ -784,11 +895,30 @@
       if (leftPressed) myPad.x -= mySpeed * step;
       myPad.x = Math.max(0, Math.min(VW - myPad.width, myPad.x));
       if (!shared) paddle.x = myPad.x;
-      else if (isMultiplayer && !isHost) sendAll({ type: 'input', id: myNetId, x: myPad.x });
+      else if (isMultiplayer && isHost && fbReady && fbDb && roomCode) {
+        const now = Date.now();
+        if (now - lastFbPadWrite >= 70) {
+          lastFbPadWrite = now;
+          fbDb.ref(fbRoomPath() + '/pads/' + myNetId).set({ x: myPad.x, y: myPad.y, slow: !!myPad.slow }).catch(()=>{});
+        }
+      } else if (isMultiplayer && !isHost) {
+        sendAll({ type: 'input', id: myNetId, x: myPad.x });
+        if (fbReady && fbDb && roomCode) {
+          const now = Date.now();
+          if (now - lastFbPadWrite >= 70) {
+            lastFbPadWrite = now;
+            fbDb.ref(fbRoomPath() + '/pads/' + myNetId).set({ x: myPad.x, y: myPad.y, slow: !!myPad.slow }).catch(()=>{});
+          }
+        }
+      }
     }
     if (shared && paddles.some(p => p.id === 'cpu')) moveCpu();
 
     const simulate = !shared || !isMultiplayer || isHost;
+    if (!simulate && shared) {
+      ball.x += ball.dx * step;
+      ball.y += ball.dy * step;
+    }
     if (simulate) {
       ball.x += ball.dx * step;
       ball.y += ball.dy * step;
@@ -1037,6 +1167,7 @@
     if (peer) try { peer.destroy(); } catch(e){}
     peer = null; hostConns = []; guestConn = null;
     isRunning = false;
+    fbStop();
     paddles = []; lastHitter = null;
     if (animationId) cancelAnimationFrame(animationId);
     animationId = null;
@@ -1078,6 +1209,7 @@
     }
     matchStarted = true;
     if (apiBase()) apiGet('startmatch', { roomId: roomCode }).catch(()=>{});
+    if (fbReady && fbDb && roomCode) fbDb.ref(fbRoomPath() + '/cmd').set({ start: true, t: Date.now() }).catch(()=>{});
     sendAll({ type: 'start' });
     startMultiplayerMatch();
   };
@@ -1125,6 +1257,7 @@
 
   async function init() {
     await loadData();
+    await fbInit();
     const saved = localStorage.getItem('monmon_name');
     if (saved) playerNameInput.value = saved;
     playerNameInput.addEventListener('input', () => localStorage.setItem('monmon_name', playerNameInput.value.trim()));

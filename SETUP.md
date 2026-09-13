@@ -29,3 +29,7 @@ Header sheet dibuat otomatis. Tidak perlu diketik manual.
 ## Kalau host gagal daftar room
 Create harus cepat. Tempel apps-script.gs terbaru lalu Deploy New version.
 Klik Keluar tetap ada di layar room. Di dalam game ada tombol Keluar di pojok lives.
+
+
+## Mode satu lapangan
+Isi Firebase di `config.js`. Panduan lengkap: lihat **FIREBASE.md**.
