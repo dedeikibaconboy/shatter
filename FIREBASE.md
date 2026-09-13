@@ -1,65 +1,54 @@
-# Setting Firebase (bola & bata live)
+# Firebase saja (tanpa Google Sheet)
 
 Created by Muhammad Rizky Azri Mulyana
 
-Google Sheet tetap untuk daftar room. Firebase dipakai supaya bola dan bata
-di host serta guest sama dan tidak nge-freeze.
+V3.2 memakai **Firebase Realtime Database** untuk semua fitur online:
+daftar room, join, mulai match, skor, bola, bata, paddle.
 
-## 1. Buat project
-1. Buka https://console.firebase.google.com
-2. Add project → nama bebas, misalnya `monmon-shatter`
-3. Google Analytics boleh off
+Google Sheet dan Apps Script **tidak dipakai lagi**.
 
-## 2. Aktifkan Realtime Database
+Paket Spark (gratis) cukup selama room bersamaan tidak terlalu banyak
+(batas penting: 100 koneksi bersamaan, 10 GB download/bulan).
+Game ini sudah dihemat: world 8x/detik data dipadatkan, skor & paddle
+tidak ditulis setiap frame, room hilang otomatis jika host menutup tab.
+
+## 1. Project
+1. https://console.firebase.google.com
+2. Project `monmon-shatter` (atau buat baru)
+3. Analytics boleh off
+
+## 2. Realtime Database
 1. Build → Realtime Database → Create Database
-2. Pilih lokasi terdekat (asia-southeast1 jika ada)
-3. Mulai mode **locked**, nanti diganti rules
+2. Lokasi: asia-southeast1
+3. Mulai locked, lalu ganti rules
 
-## 3. Aktifkan Anonymous Auth
+## 3. Anonymous Auth (wajib)
 1. Build → Authentication → Get started
 2. Sign-in method → Anonymous → Enable
 
-## 4. Tempel rules
-Realtime Database → Rules → tempel ini → Publish:
+Tanpa ini pemain tidak bisa baca/tulis database.
 
-```
-{
-  "rules": {
-    "rooms": {
-      "$roomId": {
-        ".read": "auth != null",
-        ".write": "auth != null"
-      }
-    }
-  }
-}
-```
+## 4. Rules
+Realtime Database → Rules → tempel isi `database.rules.json` → Publish.
 
-## 5. Ambil config
-1. Project settings (ikon gerigi) → Your apps → Web (</>)
-2. Daftarkan app, nama `monmon`
-3. Copy objek `firebaseConfig`
+Intinya:
+- harus login anonim
+- host saja yang boleh tulis `lobby`, `meta`, `world`
+- tiap pemain hanya tulis `pads/{uid}` dan `players/{uid}` sendiri
+- statistik hanya boleh bertambah +1
 
-## 6. Tempel ke config.js
-Isi `window.MONMON_FIREBASE` dengan nilai dari Firebase.
-Yang wajib ada: `apiKey` dan `databaseURL`.
+## 5. Config web
+Project settings → Your apps → Web → copy `firebaseConfig`
+ke `config.js` (`window.MONMON_FIREBASE`).
+Wajib ada `apiKey` dan `databaseURL`.
 
-Contoh:
+## 6. Cek
+1. Buka game, stats tidak boleh terus "—"
+2. Buat room → di console RTDB muncul `lobby/KODE` dan `rooms/KODE`
+3. Tutup tab host → node itu hilang (onDisconnect)
 
-```
-window.MONMON_FIREBASE = {
-  apiKey: "AIza...",
-  authDomain: "monmon-shatter.firebaseapp.com",
-  databaseURL: "https://monmon-shatter-default-rtdb.asia-southeast1.firebasedatabase.app",
-  projectId: "monmon-shatter",
-  storageBucket: "monmon-shatter.appspot.com",
-  messagingSenderId: "123",
-  appId: "1:123:web:abc"
-};
-```
-
-## 7. Upload
-Upload folder game (termasuk config.js yang sudah diisi) ke GitHub Pages.
-
-Tanpa langkah 6, room Sheet tetap jalan, tapi bola satu lapangan
-bisa freeze seperti sebelumnya.
+## Hemat kuota Spark
+- Jangan buka puluhan tab sekaligus (1 tab = 1 koneksi)
+- Jangan taruh screenshot/video di RTDB
+- Kalau download mendekati 10 GB/bulan, kurangi world write
+  (sudah 120 ms) atau batasi pemain

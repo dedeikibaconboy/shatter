@@ -1,9 +1,39 @@
 {
   "rules": {
+    "stats": {
+      ".read": "auth != null",
+      "$key": {
+        ".write": "auth != null && newData.isNumber() && newData.val() >= 0 && (!data.exists() || newData.val() === data.val() + 1)"
+      }
+    },
+    "lobby": {
+      ".read": "auth != null",
+      "$roomId": {
+        ".write": "auth != null && (!data.exists() || data.child('hostId').val() === auth.uid || newData.val() === null)"
+      }
+    },
     "rooms": {
       "$roomId": {
         ".read": "auth != null",
-        ".write": "auth != null"
+        "meta": {
+          ".write": "auth != null && (!data.exists() || data.child('hostId').val() === auth.uid || newData.val() === null)"
+        },
+        "cmd": {
+          ".write": "auth != null"
+        },
+        "world": {
+          ".write": "auth != null && (!root.child('rooms/'+$roomId+'/meta/hostId').exists() || root.child('rooms/'+$roomId+'/meta/hostId').val() === auth.uid || newData.val() === null)"
+        },
+        "pads": {
+          "$uid": {
+            ".write": "auth != null && $uid === auth.uid"
+          }
+        },
+        "players": {
+          "$uid": {
+            ".write": "auth != null && ($uid === auth.uid || root.child('rooms/'+$roomId+'/meta/hostId').val() === auth.uid || newData.val() === null)"
+          }
+        }
       }
     }
   }
