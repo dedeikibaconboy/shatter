@@ -513,6 +513,7 @@
   }
   const sfxPaddle = () => playTone(220, 0.06);
   function sfxBrick(brick) {
+    if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
     const hard = Number((brick && (brick.maxHp || brick.points)) || 10);
     if (hard >= 30) {
       [392, 523, 659, 784].forEach((f, i) => setTimeout(() => playTone(f, 0.16, i ? 'triangle' : 'square', 0.07 + i * 0.015), i * 55));
@@ -1052,9 +1053,20 @@
   }
 
   function spawnParticles(x, y, color) {
-    const n = IS_MOBILE ? 4 : 8;
+    // Samakan animasi hancur bata dengan mode online (lebih hidup, sama di solo & multi)
+    const n = IS_MOBILE ? 8 : 14;
     for (let i = 0; i < n; i++) {
-      particles.push({ x, y, dx:(Math.random()-.5)*5, dy:(Math.random()-.5)*5, life:20, maxLife:20, color, size:2 });
+      const ang = Math.random() * Math.PI * 2;
+      const spd = 1.5 + Math.random() * 4.5;
+      particles.push({
+        x, y,
+        dx: Math.cos(ang) * spd,
+        dy: Math.sin(ang) * spd - Math.random() * 1.5,
+        life: 22 + Math.random() * 14,
+        maxLife: 36,
+        color,
+        size: 1.5 + Math.random() * 2.5
+      });
     }
   }
 
@@ -1075,13 +1087,26 @@
 
   function moveCpu() {
     const cpu = paddles.find(p => p.id === 'cpu');
-    if (!cpu || cpu.dead) return;
+    if (!cpu) return;
+    // CPU tetap hidup & bergerak meski pemain sudah kehabisan nyawa
+    if (cpu.dead) {
+      const r = roster.find(p => p.id === 'cpu');
+      if (r && (r.lives == null || r.lives > 0) && !r.finished) cpu.dead = false;
+      else return;
+    }
     const aliveNow = alivePlayers();
     const onlyCpu = aliveNow.length === 1 && aliveNow[0].id === 'cpu';
-    if (onlyCpu) turnId = 'cpu';
-    const myTurn = turnId === 'cpu' || onlyCpu;
-    const target = myTurn ? (ball.x - cpu.width / 2) : (ball.x < VW/2 ? VW - cpu.width - 10 : 10);
-    const spd = fairPaddleSpeed() * (onlyCpu ? 1.2 : (myTurn ? 0.9 : 0.55));
+    const playerDead = !aliveNow.some(p => p.id === myNetId);
+    if (onlyCpu || playerDead) {
+      turnId = 'cpu';
+      cpu.dead = false;
+    }
+    const myTurn = turnId === 'cpu' || onlyCpu || playerDead;
+    // Saat hanya CPU / pemain sudah mati: raket selalu mengejar bola (tidak diam)
+    const target = myTurn
+      ? (ball.x - cpu.width / 2)
+      : (ball.x < VW / 2 ? VW - cpu.width - 10 : 10);
+    const spd = fairPaddleSpeed() * (onlyCpu || playerDead ? 1.35 : (myTurn ? 0.95 : 0.55));
     if (Math.abs(target - cpu.x) < spd) cpu.x = target;
     else cpu.x += target > cpu.x ? spd : -spd;
     cpu.x = Math.max(0, Math.min(VW - cpu.width, cpu.x));
@@ -1252,7 +1277,7 @@
     }
     for (let i = particles.length-1; i >= 0; i--) {
       const pt = particles[i];
-      pt.x += pt.dx; pt.y += pt.dy; pt.life--;
+      pt.x += pt.dx; pt.y += pt.dy; pt.dy += 0.12; pt.life--;
       if (pt.life <= 0) particles.splice(i,1);
     }
     for (let i = floatTexts.length-1; i >= 0; i--) {
@@ -1315,6 +1340,17 @@
         ctx.restore();
       }
     } catch (e) {}
+    // Animasi partikel hancur bata (sama di solo & multiplayer)
+    particles.forEach(pt => {
+      const a = Math.max(0, pt.life / (pt.maxLife || 20));
+      ctx.globalAlpha = a;
+      ctx.fillStyle = pt.color || '#e63946';
+      const sz = (pt.size || 2) * a;
+      ctx.beginPath();
+      ctx.arc(sx(pt.x), sy(pt.y), Math.max(0.5, sw(sz)), 0, Math.PI * 2);
+      ctx.fill();
+    });
+    ctx.globalAlpha = 1;
     ctx.fillStyle = 'rgba(42,157,143,.55)';
     ctx.font = '12px Rajdhani';
     ctx.fillText('LEVEL ' + (currentLevel+1), 8, 14);
@@ -1356,18 +1392,22 @@
   }
 
   function startSolo(resumeLevel) {
+    if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
     myName = getPlayerName();
     localStorage.setItem('monmon_name', myName);
     gameMode = selectedMode();
     isMultiplayer = false;
-    lastHitter = null; turnId = myNetId; pendingBricks = [];
+    lastHitter = null; turnId = myNetId || 'local'; pendingBricks = [];
     lives = settings.lives;
     if (!resumeLevel) { score = 0; currentLevel = 0; }
     if (gameMode === 'shared') {
+      const pid = myNetId || 'local';
       roster = [
-        { id: myNetId, name: myName, score: 0, finished: false, host: true, lives: settings.lives },
+        { id: pid, name: myName, score: 0, finished: false, host: true, lives: settings.lives },
         { id: 'cpu', name: 'CPU', score: 0, finished: false, host: false, lives: settings.lives }
       ];
+      myNetId = pid;
+      turnId = pid;
       myNameHud.textContent = myName + ' vs CPU';
     } else {
       roster = [];
@@ -1657,7 +1697,439 @@
     btnCopy.classList.add('copied');
     setTimeout(() => { btnCopy.textContent = 'Copy'; btnCopy.classList.remove('copied'); }, 1200);
   };
+
   window.addEventListener('resize', () => { if (!gameScreenEl.classList.contains('hidden')) resizeCanvas(); });
+
+  /* ========== CHAT & PRESENCE (ringan, auto-hapus 24 jam) ========== */
+  const DAY_MS = 24 * 60 * 60 * 1000;
+  const MAX_MSGS = 40;
+  let myCountry = '—';
+  let presenceUnsub = null, chatsListUnsub = null, activeChatUnsub = null;
+  let presenceMap = {};
+  let chatRoomsMap = {};
+  let activeChatId = null;
+  let activeChatMeta = null;
+  let unreadCount = 0;
+  let knownDmIds = new Set(JSON.parse(localStorage.getItem('monmon_dms') || '[]'));
+
+  function getPlayerNameSafe() {
+    const n = (playerNameInput && playerNameInput.value || '').trim();
+    return n || myName || 'Player';
+  }
+
+  async function detectCountry() {
+    try {
+      const r = await fetch('https://ipapi.co/json/', { signal: AbortSignal.timeout(4000) });
+      const j = await r.json();
+      if (j && j.country_name) return j.country_name + (j.country_code ? ' (' + j.country_code + ')' : '');
+    } catch (e) {}
+    try {
+      const r2 = await fetch('https://ip-api.com/json/?fields=country,countryCode', { signal: AbortSignal.timeout(4000) });
+      const j2 = await r2.json();
+      if (j2 && j2.country) return j2.country + (j2.countryCode ? ' (' + j2.countryCode + ')' : '');
+    } catch (e) {}
+    return (navigator.language || 'ID').toUpperCase();
+  }
+
+  function showChatFab(show) {
+    const fab = document.getElementById('chatFab');
+    if (fab) fab.classList.toggle('hidden', !show);
+  }
+
+  function openChatPanel(open) {
+    const panel = document.getElementById('chatPanel');
+    if (!panel) return;
+    panel.classList.toggle('open', !!open);
+    panel.setAttribute('aria-hidden', open ? 'false' : 'true');
+  }
+
+  function setChatTab(tab) {
+    document.querySelectorAll('.chat-tab').forEach(t => t.classList.toggle('active', t.dataset.tab === tab));
+    ['online', 'rooms', 'dm'].forEach(id => {
+      const el = document.getElementById('chat' + id.charAt(0).toUpperCase() + id.slice(1) + 'View');
+      if (el) el.classList.toggle('hidden', id !== tab);
+    });
+    const thread = document.getElementById('chatThreadView');
+    if (thread) thread.classList.add('hidden');
+    activeChatId = null;
+    if (activeChatUnsub) { try { activeChatUnsub(); } catch (e) {} activeChatUnsub = null; }
+  }
+
+  function renderOnlineList() {
+    const el = document.getElementById('onlineList');
+    if (!el) return;
+    const list = Object.keys(presenceMap).map(uid => Object.assign({ uid }, presenceMap[uid]))
+      .filter(p => p.name && p.uid !== myNetId)
+      .sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+    if (!list.length) {
+      el.innerHTML = '<p class="muted">Belum ada pemain online lain.</p>';
+      return;
+    }
+    el.innerHTML = list.map(p =>
+      `<div class="online-row" data-uid="${escapeHtml(p.uid)}" data-name="${escapeHtml(p.name)}">
+        <span class="online-dot"></span>
+        <div class="online-info"><strong>${escapeHtml(p.name)}</strong><span>${escapeHtml(p.country || '—')}</span></div>
+      </div>`
+    ).join('');
+    el.querySelectorAll('.online-row').forEach(row => {
+      row.onclick = () => openDmWith(row.dataset.uid, row.dataset.name);
+    });
+  }
+
+  function renderRoomsList() {
+    const el = document.getElementById('chatRoomsList');
+    if (!el) return;
+    const now = Date.now();
+    const list = Object.keys(chatRoomsMap).map(id => Object.assign({ id }, chatRoomsMap[id]))
+      .filter(r => r.type === 'room' && (now - (r.lastActivity || 0) < DAY_MS))
+      .sort((a, b) => (b.lastActivity || 0) - (a.lastActivity || 0));
+    if (!list.length) {
+      el.innerHTML = '<p class="muted">Belum ada ruang chat aktif (hapus otomatis setelah 24 jam idle).</p>';
+      return;
+    }
+    el.innerHTML = list.map(r => {
+      const lock = r.locked ? '🔒 ' : '';
+      const pass = r.hasPass ? '🔑 ' : '';
+      const n = Object.keys(r.members || {}).length;
+      return `<div class="room-row" data-id="${escapeHtml(r.id)}">
+        <div class="online-info"><strong>${lock}${pass}${escapeHtml(r.name || 'Ruang')}</strong>
+        <span>${n} anggota · ${escapeHtml(r.ownerName || '')}</span></div>
+      </div>`;
+    }).join('');
+    el.querySelectorAll('.room-row').forEach(row => {
+      row.onclick = () => openChatRoom(row.dataset.id);
+    });
+  }
+
+  function renderDmList() {
+    const el = document.getElementById('dmThreadList');
+    if (!el) return;
+    const now = Date.now();
+    const list = Object.keys(chatRoomsMap).map(id => Object.assign({ id }, chatRoomsMap[id]))
+      .filter(r => r.type === 'dm' && knownDmIds.has(r.id) && (now - (r.lastActivity || 0) < DAY_MS))
+      .sort((a, b) => (b.lastActivity || 0) - (a.lastActivity || 0));
+    if (!list.length) {
+      el.innerHTML = '<p class="muted">Belum ada DM. Klik nama di tab Online.</p>';
+      return;
+    }
+    el.innerHTML = list.map(r => {
+      const other = Object.keys(r.members || {}).find(u => u !== myNetId);
+      const nm = (r.members && other && r.members[other] && r.members[other].name) || r.name || 'DM';
+      return `<div class="dm-row" data-id="${escapeHtml(r.id)}">
+        <div class="online-info"><strong>${escapeHtml(nm)}</strong><span>DM privat</span></div>
+      </div>`;
+    }).join('');
+    el.querySelectorAll('.dm-row').forEach(row => {
+      row.onclick = () => openChatRoom(row.dataset.id);
+    });
+  }
+
+  function dmIdFor(uidA, uidB) {
+    return 'dm_' + [uidA, uidB].sort().join('_');
+  }
+
+  async function openDmWith(otherUid, otherName) {
+    if (!fbReady || !fbDb || !myNetId) return;
+    const cid = dmIdFor(myNetId, otherUid);
+    knownDmIds.add(cid);
+    localStorage.setItem('monmon_dms', JSON.stringify([...knownDmIds]));
+    const ref = fbDb.ref('chats/' + cid);
+    const snap = await ref.once('value');
+    if (!snap.exists()) {
+      await ref.set({
+        type: 'dm',
+        name: otherName || 'DM',
+        ownerId: myNetId,
+        ownerName: getPlayerNameSafe(),
+        locked: false,
+        hasPass: false,
+        password: null,
+        question: null,
+        lastActivity: Date.now(),
+        members: {
+          [myNetId]: { name: getPlayerNameSafe(), joinedAt: Date.now() },
+          [otherUid]: { name: otherName || 'Player', joinedAt: Date.now() }
+        }
+      });
+    } else {
+      await ref.child('members/' + myNetId).set({ name: getPlayerNameSafe(), joinedAt: Date.now() });
+      await ref.update({ lastActivity: Date.now() });
+    }
+    openChatRoom(cid);
+  }
+
+  async function openChatRoom(chatId) {
+    if (!fbReady || !fbDb) return;
+    activeChatId = chatId;
+    document.querySelectorAll('.chat-view').forEach(v => v.classList.add('hidden'));
+    const thread = document.getElementById('chatThreadView');
+    if (thread) thread.classList.remove('hidden');
+    if (activeChatUnsub) { try { activeChatUnsub(); } catch (e) {} }
+
+    const metaRef = fbDb.ref('chats/' + chatId);
+    const msgRef = metaRef.child('messages');
+    const reqRef = metaRef.child('requests');
+
+    const onMeta = metaRef.on('value', (snap) => {
+      const m = snap.val() || {};
+      activeChatMeta = m;
+      const title = document.getElementById('chatThreadName');
+      const metaEl = document.getElementById('chatThreadMeta');
+      if (title) title.textContent = m.name || (m.type === 'dm' ? 'DM' : 'Ruang');
+      const nMem = Object.keys(m.members || {}).length;
+      if (metaEl) metaEl.textContent = (m.type === 'dm' ? 'Privat' : nMem + ' anggota') + (m.locked ? ' · 🔒 terkunci' : '');
+      const lockBtn = document.getElementById('chatLockBtn');
+      const isMember = !!(m.members && m.members[myNetId]);
+      const isOwner = m.ownerId === myNetId;
+      if (lockBtn) {
+        lockBtn.classList.toggle('hidden', m.type === 'dm' || !isMember);
+        lockBtn.textContent = m.locked ? '🔓' : '🔒';
+        lockBtn.title = m.locked ? 'Buka kunci' : 'Kunci ruang';
+      }
+      const gate = document.getElementById('chatJoinGate');
+      const compose = document.querySelector('.chat-compose');
+      if (!isMember && m.type === 'room') {
+        if (gate) {
+          gate.classList.remove('hidden');
+          const q = document.getElementById('chatJoinQuestion');
+          if (q) q.textContent = m.question
+            ? ('Pertanyaan: ' + m.question)
+            : (m.locked ? 'Ruang terkunci — minta izin bergabung' : 'Masuk ke ruang ini');
+          const passIn = document.getElementById('chatJoinPass');
+          if (passIn) passIn.classList.toggle('hidden', !m.hasPass);
+        }
+        if (compose) compose.classList.add('hidden');
+      } else {
+        if (gate) gate.classList.add('hidden');
+        if (compose) compose.classList.remove('hidden');
+      }
+      // requests for members
+      const box = document.getElementById('chatRequestsBox');
+      if (box && isMember && m.type === 'room') {
+        // handled by requests listener
+      } else if (box) box.classList.add('hidden');
+    });
+
+    const onMsg = msgRef.limitToLast(MAX_MSGS).on('value', (snap) => {
+      const box = document.getElementById('chatMessages');
+      if (!box) return;
+      const data = snap.val() || {};
+      const arr = Object.keys(data).map(k => Object.assign({ id: k }, data[k])).sort((a, b) => (a.t || 0) - (b.t || 0));
+      box.innerHTML = arr.map(msg => {
+        const mine = msg.uid === myNetId;
+        const time = msg.t ? new Date(msg.t).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }) : '';
+        return `<div class="chat-msg ${mine ? 'mine' : 'other'}">
+          ${mine ? '' : `<div class="msg-name">${escapeHtml(msg.name || '?')}</div>`}
+          <div>${escapeHtml(msg.text || '')}</div>
+          <div class="msg-time">${time}</div>
+        </div>`;
+      }).join('');
+      box.scrollTop = box.scrollHeight;
+      // prune old messages beyond MAX if owner
+      if (activeChatMeta && activeChatMeta.ownerId === myNetId && arr.length > MAX_MSGS + 5) {
+        const toDel = arr.slice(0, arr.length - MAX_MSGS);
+        toDel.forEach(m => msgRef.child(m.id).remove().catch(() => {}));
+      }
+    });
+
+    const onReq = reqRef.on('value', (snap) => {
+      const box = document.getElementById('chatRequestsBox');
+      if (!box || !activeChatMeta || !activeChatMeta.members || !activeChatMeta.members[myNetId]) {
+        if (box) box.classList.add('hidden');
+        return;
+      }
+      const data = snap.val() || {};
+      const keys = Object.keys(data);
+      if (!keys.length) { box.classList.add('hidden'); box.innerHTML = ''; return; }
+      box.classList.remove('hidden');
+      box.innerHTML = '<p style="font-size:12px;color:#ffd166;margin:0 0 6px">Permintaan bergabung:</p>' + keys.map(uid => {
+        const r = data[uid];
+        return `<div class="req-row" data-uid="${escapeHtml(uid)}">
+          <span><strong>${escapeHtml(r.name || uid)}</strong>${r.answer ? ' · ' + escapeHtml(r.answer) : ''}</span>
+          <button type="button" class="btn primary small req-ok">Izinkan</button>
+          <button type="button" class="btn secondary small req-no">Tolak</button>
+        </div>`;
+      }).join('');
+      box.querySelectorAll('.req-ok').forEach(btn => {
+        btn.onclick = async () => {
+          const uid = btn.closest('.req-row').dataset.uid;
+          const r = data[uid];
+          await metaRef.child('members/' + uid).set({ name: (r && r.name) || 'Player', joinedAt: Date.now() });
+          await reqRef.child(uid).remove();
+          await metaRef.update({ lastActivity: Date.now() });
+        };
+      });
+      box.querySelectorAll('.req-no').forEach(btn => {
+        btn.onclick = async () => {
+          const uid = btn.closest('.req-row').dataset.uid;
+          await reqRef.child(uid).remove();
+        };
+      });
+    });
+
+    activeChatUnsub = () => {
+      metaRef.off('value', onMeta);
+      msgRef.off('value', onMsg);
+      reqRef.off('value', onReq);
+    };
+  }
+
+  async function sendChatMessage() {
+    const input = document.getElementById('chatInput');
+    if (!input || !activeChatId || !fbDb || !myNetId) return;
+    const text = (input.value || '').trim();
+    if (!text) return;
+    input.value = '';
+    const ref = fbDb.ref('chats/' + activeChatId);
+    await ref.child('messages').push({
+      uid: myNetId,
+      name: getPlayerNameSafe(),
+      text: text.slice(0, 280),
+      t: Date.now()
+    });
+    await ref.update({ lastActivity: Date.now() });
+  }
+
+  async function requestJoinChat() {
+    if (!activeChatId || !fbDb || !myNetId || !activeChatMeta) return;
+    const ans = (document.getElementById('chatJoinAnswer') || {}).value || '';
+    const pass = (document.getElementById('chatJoinPass') || {}).value || '';
+    if (activeChatMeta.hasPass && activeChatMeta.password && pass !== activeChatMeta.password) {
+      alert('Password salah.');
+      return;
+    }
+    if (!activeChatMeta.locked && (!activeChatMeta.hasPass || pass === activeChatMeta.password)) {
+      // langsung join
+      await fbDb.ref('chats/' + activeChatId + '/members/' + myNetId).set({
+        name: getPlayerNameSafe(), joinedAt: Date.now()
+      });
+      await fbDb.ref('chats/' + activeChatId).update({ lastActivity: Date.now() });
+      return;
+    }
+    await fbDb.ref('chats/' + activeChatId + '/requests/' + myNetId).set({
+      name: getPlayerNameSafe(),
+      answer: ans.slice(0, 80),
+      t: Date.now()
+    });
+    alert('Permintaan dikirim. Tunggu izin anggota yang sudah di dalam.');
+  }
+
+  async function createChatRoom() {
+    if (!fbReady || !fbDb || !myNetId) return;
+    const name = ((document.getElementById('newRoomName') || {}).value || '').trim() || 'Ruang Chat';
+    const passOn = !!(document.getElementById('newRoomPassOn') || {}).checked;
+    const pass = passOn ? ((document.getElementById('newRoomPass') || {}).value || '').trim() : '';
+    const question = ((document.getElementById('newRoomQuestion') || {}).value || '').trim() || null;
+    const id = 'room_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+    await fbDb.ref('chats/' + id).set({
+      type: 'room',
+      name: name.slice(0, 24),
+      ownerId: myNetId,
+      ownerName: getPlayerNameSafe(),
+      locked: false,
+      hasPass: !!pass,
+      password: pass || null,
+      question,
+      lastActivity: Date.now(),
+      members: { [myNetId]: { name: getPlayerNameSafe(), joinedAt: Date.now() } }
+    });
+    document.getElementById('chatCreateModal').classList.add('hidden');
+    openChatRoom(id);
+  }
+
+  async function toggleLockChat() {
+    if (!activeChatId || !activeChatMeta || activeChatMeta.ownerId !== myNetId) {
+      // any member can lock for simplicity as requested
+      if (!activeChatId || !activeChatMeta || !activeChatMeta.members || !activeChatMeta.members[myNetId]) return;
+    }
+    const next = !activeChatMeta.locked;
+    await fbDb.ref('chats/' + activeChatId).update({ locked: next, lastActivity: Date.now() });
+  }
+
+  async function startPresence() {
+    if (!fbReady || !fbDb || !myNetId) return;
+    myCountry = await detectCountry();
+    const pref = fbDb.ref('presence/' + myNetId);
+    const write = () => {
+      const nm = getPlayerNameSafe();
+      if (!nm || nm === 'Player') return;
+      pref.set({
+        name: nm,
+        country: myCountry,
+        lastSeen: Date.now(),
+        online: true
+      }).catch(() => {});
+    };
+    write();
+    pref.onDisconnect().remove();
+    setInterval(write, 25000);
+    playerNameInput && playerNameInput.addEventListener('change', write);
+
+    presenceUnsub = fbDb.ref('presence').on('value', (snap) => {
+      presenceMap = snap.val() || {};
+      // prune stale (>2 min)
+      const now = Date.now();
+      Object.keys(presenceMap).forEach(uid => {
+        if (now - (presenceMap[uid].lastSeen || 0) > 120000) {
+          if (uid !== myNetId) delete presenceMap[uid];
+        }
+      });
+      renderOnlineList();
+    });
+
+    chatsListUnsub = fbDb.ref('chats').on('value', (snap) => {
+      const all = snap.val() || {};
+      chatRoomsMap = {};
+      const now = Date.now();
+      Object.keys(all).forEach(id => {
+        const c = all[id];
+        if (!c) return;
+        if (now - (c.lastActivity || 0) > DAY_MS) {
+          // auto hapus ruang/DM idle > 1 hari (oleh client yang melihat)
+          fbDb.ref('chats/' + id).remove().catch(() => {});
+          return;
+        }
+        chatRoomsMap[id] = Object.assign({ id }, c);
+      });
+      renderRoomsList();
+      renderDmList();
+    });
+
+    showChatFab(true);
+  }
+
+  // Wire UI
+  (function wireChatUI() {
+    const fab = document.getElementById('chatFab');
+    const panel = document.getElementById('chatPanel');
+    const closeBtn = document.getElementById('chatClose');
+    if (fab) fab.onclick = () => openChatPanel(!(panel && panel.classList.contains('open')));
+    if (closeBtn) closeBtn.onclick = () => openChatPanel(false);
+    document.querySelectorAll('.chat-tab').forEach(t => {
+      t.onclick = () => setChatTab(t.dataset.tab);
+    });
+    const back = document.getElementById('chatBack');
+    if (back) back.onclick = () => setChatTab('online');
+    const send = document.getElementById('chatSend');
+    if (send) send.onclick = sendChatMessage;
+    const input = document.getElementById('chatInput');
+    if (input) input.addEventListener('keydown', (e) => { if (e.key === 'Enter') sendChatMessage(); });
+    const reqBtn = document.getElementById('btnRequestJoin');
+    if (reqBtn) reqBtn.onclick = requestJoinChat;
+    const lockBtn = document.getElementById('chatLockBtn');
+    if (lockBtn) lockBtn.onclick = toggleLockChat;
+    const createBtn = document.getElementById('btnCreateChatRoom');
+    const modal = document.getElementById('chatCreateModal');
+    if (createBtn && modal) createBtn.onclick = () => modal.classList.remove('hidden');
+    const cancel = document.getElementById('btnCancelCreateRoom');
+    if (cancel && modal) cancel.onclick = () => modal.classList.add('hidden');
+    const confirm = document.getElementById('btnConfirmCreateRoom');
+    if (confirm) confirm.onclick = createChatRoom;
+    const passOn = document.getElementById('newRoomPassOn');
+    const passIn = document.getElementById('newRoomPass');
+    if (passOn && passIn) passOn.onchange = () => passIn.classList.toggle('hidden', !passOn.checked);
+  })();
+
 
   async function init() {
     await loadData();
@@ -1689,6 +2161,7 @@
     }
     apiWarnEl.classList.add('hidden');
     startLobbyWatch();
+    startPresence();
     if (!sessionStorage.getItem('monmon_visited')) {
       sessionStorage.setItem('monmon_visited', '1');
       bumpStat('visits');

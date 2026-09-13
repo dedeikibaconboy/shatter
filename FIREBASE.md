@@ -52,3 +52,12 @@ Wajib ada `apiKey` dan `databaseURL`.
 - Jangan taruh screenshot/video di RTDB
 - Kalau download mendekati 10 GB/bulan, kurangi world write
   (sudah 120 ms) atau batasi pemain
+
+## Chat & Presence (V3.3+)
+Path baru di rules: `presence/{uid}` dan `chats/{chatId}`.
+Pastikan rules.json terbaru sudah di-Publish.
+
+Chat dirancang hemat:
+- Presence heartbeat ~25 detik, onDisconnect hapus
+- Pesan dibatasi ~40 per room (prune otomatis)
+- Room/DM idle > 24 jam dihapus client-side saat ada yang membuka list

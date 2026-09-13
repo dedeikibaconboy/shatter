@@ -35,6 +35,33 @@
           }
         }
       }
+    },
+    "presence": {
+      ".read": "auth != null",
+      "$uid": {
+        ".write": "auth != null && $uid === auth.uid"
+      }
+    },
+    "chats": {
+      ".read": "auth != null",
+      "$chatId": {
+        ".write": "auth != null",
+        "messages": {
+          "$msgId": {
+            ".write": "auth != null"
+          }
+        },
+        "members": {
+          "$uid": {
+            ".write": "auth != null"
+          }
+        },
+        "requests": {
+          "$uid": {
+            ".write": "auth != null"
+          }
+        }
+      }
     }
   }
 }
