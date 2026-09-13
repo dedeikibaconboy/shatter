@@ -1321,7 +1321,11 @@
   }
 
   function draw() {
+    try {
+    if (!canvas || !ctx) return;
+    if (!canvas.width || !canvas.height) resizeCanvas();
     ctx.save();
+    ctx.setTransform(1,0,0,1,0,0);
     if (shakeAmt) {
       ctx.translate((Math.random() - 0.5) * shakeAmt * 2, (Math.random() - 0.5) * shakeAmt * 2);
       shakeAmt *= 0.72;
@@ -1376,30 +1380,47 @@
       ctx.fill();
     });
     ctx.globalAlpha = 1;
-    (function drawBall() {
-      const r = sw(ball.radius);
-      const cx = sx(ball.x), cy = sy(ball.y);
+    (function drawBall3d() {
+      const rad = Number(ball && ball.radius);
+      const r = Math.max(3, sw(isFinite(rad) && rad > 0 ? rad : 8));
+      const cx = sx(ball.x || 0), cy = sy(ball.y || 0);
+      if (!isFinite(r) || !isFinite(cx) || !isFinite(cy)) return;
       ctx.save();
+      ctx.fillStyle = 'rgba(0,0,0,.28)';
+      ctx.beginPath();
+      ctx.arc(cx + r * 0.16, cy + r * 0.38, r * 0.72, 0, Math.PI * 2);
+      ctx.fill();
       ctx.translate(cx, cy);
       ctx.rotate(ball.angle || 0);
-      ctx.fillStyle = '#2a9d8f';
-      ctx.beginPath(); ctx.arc(0, 0, r, 0, Math.PI * 2); ctx.fill();
-      ctx.fillStyle = '#08352f';
-      ctx.beginPath(); ctx.arc(0, 0, r * 0.92, -0.55, 0.55); ctx.lineTo(0, 0); ctx.fill();
-      ctx.fillStyle = '#c8fff4';
-      ctx.fillRect(-r * 0.9, -Math.max(1.5, r * 0.18), r * 1.8, Math.max(3, r * 0.36));
-      ctx.restore();
-      ctx.save();
-      ctx.translate(cx, cy);
-      const dir = (ball.spin || 0);
-      if (Math.abs(dir) > 0.02) {
-        ctx.fillStyle = dir > 0 ? '#ffd166' : '#4cc9f0';
-        ctx.font = 'bold ' + Math.max(10, Math.round(r)) + 'px Rajdhani';
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        ctx.fillText(dir > 0 ? '↻' : '↺', r + 10, 0);
+      let g;
+      try {
+        g = ctx.createRadialGradient(-r * 0.32, -r * 0.38, r * 0.08, 0, 0, r);
+        g.addColorStop(0, '#d8fff6');
+        g.addColorStop(0.28, '#3dcfb8');
+        g.addColorStop(0.7, '#1b7c70');
+        g.addColorStop(1, '#06231f');
+      } catch (e) {
+        g = '#2a9d8f';
       }
+      ctx.fillStyle = g;
+      ctx.beginPath(); ctx.arc(0, 0, r, 0, Math.PI * 2); ctx.fill();
+      ctx.strokeStyle = 'rgba(6,30,28,.75)';
+      ctx.lineWidth = Math.max(1.4, r * 0.16);
+      ctx.beginPath(); ctx.arc(0, 0, r * 0.58, 0, Math.PI * 2); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(-r * 0.96, 0); ctx.quadraticCurveTo(0, -r * 0.22, r * 0.96, 0); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(0, -r * 0.96); ctx.quadraticCurveTo(r * 0.22, 0, 0, r * 0.96); ctx.stroke();
+      ctx.strokeStyle = 'rgba(255,255,255,.28)';
+      ctx.lineWidth = Math.max(1, r * 0.08);
+      ctx.beginPath(); ctx.arc(0, 0, r * 0.82, -2.4, -0.4); ctx.stroke();
       ctx.restore();
+      try {
+        const hl = ctx.createRadialGradient(cx - r * 0.35, cy - r * 0.4, 0, cx, cy, r);
+        hl.addColorStop(0, 'rgba(255,255,255,.5)');
+        hl.addColorStop(0.22, 'rgba(255,255,255,.12)');
+        hl.addColorStop(1, 'rgba(255,255,255,0)');
+        ctx.fillStyle = hl;
+        ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.fill();
+      } catch (e) {}
     })();
     ctx.fillStyle = 'rgba(42,157,143,.55)';
     ctx.font = '12px Rajdhani';
@@ -1435,20 +1456,28 @@
       flashAmt--;
     }
     ctx.restore();
+    } catch (err) {
+      try { ctx.setTransform(1,0,0,1,0,0); } catch (e2) {}
+      console.warn('draw', err);
+    }
   }
 
   let accTime = 0;
   function loop(ts) {
-    const dt = lastTs ? (ts - lastTs) : 16;
-    lastTs = ts;
-    accTime += Math.min(dt, 50);
-    let steps = 0;
-    while (accTime >= 16.67 && steps < 5) {
-      update(16.67);
-      accTime -= 16.67;
-      steps++;
+    try {
+      const dt = lastTs ? (ts - lastTs) : 16;
+      lastTs = ts;
+      accTime += Math.min(dt, 50);
+      let steps = 0;
+      while (accTime >= 16.67 && steps < 5) {
+        update(16.67);
+        accTime -= 16.67;
+        steps++;
+      }
+      draw();
+    } catch (err) {
+      console.warn('loop', err);
     }
-    draw();
     animationId = requestAnimationFrame(loop);
   }
 
