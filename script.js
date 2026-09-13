@@ -67,6 +67,10 @@
   let pendingBricks = [];
   let splashTimer = null;
   let paddles = [];
+  let pendingAdvance = false;
+  let warnHits = {};
+  let floatTexts = [];
+  let lastTurnAnnounced = null;
   let waitPollFast = null;
   let heartbeatTimer = null, roomsPollTimer = null;
 
@@ -114,7 +118,7 @@
     ball.dx = data.ball.dx; ball.dy = data.ball.dy;
     if (data.ball.speed) ball.speed = data.ball.speed;
     lastHitter = data.lastHitter || lastHitter;
-    if (data.turnId) turnId = data.turnId;
+    if (data.turnId) setTurn(data.turnId);
     if (Array.isArray(data.bricks)) bricks = data.bricks;
     if (Array.isArray(data.pending)) pendingBricks = data.pending;
     if (Array.isArray(data.paddles)) {
@@ -533,7 +537,7 @@
             renderLiveScores();
           }
           lastHitter = data.lastHitter;
-          if (data.turnId) turnId = data.turnId;
+          if (data.turnId) setTurn(data.turnId);
         }
         break;
       case 'score': {
@@ -785,21 +789,53 @@
   }
 
   function initSharedPaddles(keepX) {
+    const alive = roster.filter(p => !p.finished && (p.lives == null || p.lives > 0));
+    const n = Math.max(1, alive.length);
+    const slot = VW / n;
+    const w = Math.min(70, slot - 8);
     paddles = roster.map((p, i) => {
       const old = paddles.find(x => x.id === p.id);
+      const ai = Math.max(0, alive.findIndex(a => a.id === p.id));
+      const dead = p.finished || (p.lives != null && p.lives <= 0);
       return {
         id: p.id,
         name: p.name,
         color: PADDLE_COLORS[i % PADDLE_COLORS.length],
-        width: 64,
+        width: w,
         height: 12,
-        x: keepX && old ? old.x : (VW / (roster.length + 1)) * (i + 1) - 32,
+        x: keepX && old && !dead ? old.x : (ai + 0.5) * slot - w / 2,
         y: VH - 26,
         speed: fairPaddleSpeed(),
-        slow: false
+        slow: false,
+        dead
       };
     });
-    if (!turnId && roster.length) turnId = roster[0].id;
+    if (!turnId) {
+      const first = alive[0] || roster[0];
+      if (first) setTurn(first.id);
+    }
+  }
+
+  function setTurn(id) {
+    if (!id || turnId === id) { turnId = id; updateTurnBanner(); return; }
+    turnId = id;
+    pendingAdvance = false;
+    updateTurnBanner();
+    if (lastTurnAnnounced !== id) {
+      lastTurnAnnounced = id;
+      playTone(id === myNetId ? 880 : 520, 0.12, 'triangle', 0.08);
+    }
+  }
+  function updateTurnBanner() {
+    const el = document.getElementById('turnBanner');
+    if (!el) return;
+    if (gameMode !== 'shared') { el.textContent = ''; return; }
+    const mine = turnId === myNetId;
+    el.textContent = (mine ? 'GILIRAN KAMU' : ('GILIRAN: ' + currentTurnName()));
+    el.classList.toggle('mine', mine);
+  }
+  function spawnFloat(x, y, text, color) {
+    floatTexts.push({ x, y, text, color: color || '#b8f2e6', life: 50 });
   }
 
   function alivePlayers() {
@@ -831,13 +867,13 @@
     document.getElementById('splash-title').textContent = autoHide ? 'NYAWA BERKURANG' : 'KAMU TERELIMINASI';
     document.getElementById('splash-sub').textContent = reason || '';
     document.getElementById('splash-hint').textContent = autoHide
-      ? 'Hilang 5 detik. Game tetap jalan di belakang.'
+      ? 'Hilang sebentar. Lapangan tetap kelihatan.'
       : 'Menunggu pemain lain selesai. Skor masih update.';
     renderSplashBoard();
     box.classList.remove('hidden');
     if (splashTimer) clearTimeout(splashTimer);
     if (autoHide) {
-      splashTimer = setTimeout(() => box.classList.add('hidden'), 5000);
+      splashTimer = setTimeout(() => box.classList.add('hidden'), 2500);
     }
   }
   function renderSplashBoard() {
@@ -891,8 +927,12 @@
 
   function startLevel(idx) {
     currentLevel = idx;
+    pendingAdvance = false;
+    pendingBricks = [];
+    warnHits = {};
     createBricks(idx);
     resetBallAndPaddle();
+    updateTurnBanner();
     particles = [];
     updateHUD();
   }
@@ -991,7 +1031,8 @@
       if (ball.y - ball.radius > VH) {
         if (shared) {
           applyLifeLoss(turnId || myNetId, 'Giliran ' + currentTurnName() + ' terlewat. Bola jatuh.');
-          turnId = nextTurnAfter(turnId);
+          initSharedPaddles(true);
+          setTurn(nextTurnAfter(turnId));
           const alive = alivePlayers();
           if (alive.length <= 1) { playerFinished(); return; }
           resetBallAndPaddle();
@@ -1003,14 +1044,31 @@
         return;
       }
 
-      const hitList = shared && paddles.length ? paddles : [paddle];
+      if (shared && pendingAdvance && ball.dy < 0 && ball.y < VH * 0.48) {
+        setTurn(nextTurnAfter(turnId));
+        pendingAdvance = false;
+      }
+
+      const hitList = shared && paddles.length ? paddles.filter(p => !p.dead) : [paddle];
       let consumedHit = false;
       let scoringOwner = turnId;
-      let advanceTurn = false;
       hitList.forEach(pad => {
         if (consumedHit) return;
         if (ball.y + ball.radius >= pad.y && ball.y + ball.radius <= pad.y + pad.height + 12 && ball.dy > 0 &&
             ball.x >= pad.x && ball.x <= pad.x + pad.width) {
+          if (shared && pad.id !== turnId) {
+            lastHitter = pad.id;
+            warnHits[pad.id] = (warnHits[pad.id] || 0) + 1;
+            if (warnHits[pad.id] === 1) {
+              spawnFloat(pad.x + pad.width/2, pad.y - 16, 'AWAS GILIRAN ' + currentTurnName(), '#ffd166');
+              playTone(200, 0.1, 'square', 0.06);
+            } else {
+              applyLifeLoss(pad.id, 'Bukan giliranmu. Giliran ' + currentTurnName());
+              initSharedPaddles(true);
+            }
+            consumedHit = true;
+            return;
+          }
           const hitPos = (ball.x - (pad.x + pad.width/2)) / (pad.width/2);
           const angle = -Math.PI/2 + hitPos * (Math.PI/3);
           ball.speed = fairBallSpeed();
@@ -1021,11 +1079,7 @@
           if (shared) {
             lastHitter = pad.id || myNetId;
             scoringOwner = turnId;
-            if (lastHitter !== turnId) {
-              applyLifeLoss(lastHitter, 'Bukan giliranmu. Giliran ' + currentTurnName());
-            } else {
-              advanceTurn = true;
-            }
+            pendingAdvance = true;
           }
           consumedHit = true;
         }
@@ -1055,6 +1109,7 @@
               if (owner === myNetId) score += brick.points;
               if (lastHitter && lastHitter !== turnId) {
                 pendingBricks.push(Object.assign({}, brick, { backAt: Date.now() + 2000 }));
+                spawnFloat(brick.x, brick.y, '+' + brick.points + ' → ' + currentTurnName(), '#2a9d8f');
               }
             } else {
               score += brick.points;
@@ -1065,7 +1120,6 @@
           break;
         }
       }
-      if (shared && advanceTurn) turnId = nextTurnAfter(scoringOwner || turnId);
       if (bricks.length === 0) { levelComplete(); return; }
       if (shared && (!isMultiplayer || isHost)) {
         worldTick++;
@@ -1077,6 +1131,10 @@
       pt.x += pt.dx; pt.y += pt.dy; pt.life--;
       if (pt.life <= 0) particles.splice(i,1);
     }
+    for (let i = floatTexts.length-1; i >= 0; i--) {
+      floatTexts[i].y -= 0.4; floatTexts[i].life--;
+      if (floatTexts[i].life <= 0) floatTexts.splice(i,1);
+    }
   }
 
   function draw() {
@@ -1086,25 +1144,35 @@
       ctx.fillStyle = brick.color;
       ctx.fillRect(sx(brick.x), sy(brick.y), sw(brick.width), sh(brick.height));
     });
+    const blink = Math.sin(Date.now() / 160) > 0;
+    pendingBricks.forEach(pb => {
+      ctx.globalAlpha = blink ? 0.55 : 0.2;
+      ctx.strokeStyle = pb.color || '#fff';
+      ctx.lineWidth = 2;
+      ctx.strokeRect(sx(pb.x), sy(pb.y), sw(pb.width), sh(pb.height));
+      ctx.globalAlpha = 1;
+    });
     if (gameMode === 'shared' && paddles.length) {
-      const blink = Math.sin(Date.now() / 180) > 0;
+      const pblink = Math.sin(Date.now() / 180) > 0;
       const nid = nextTurnAfter(turnId);
       paddles.forEach(pad => {
-        const isTurn = pad.id === turnId;
-        const isNext = pad.id === nid && pad.id !== turnId;
-        if (isTurn && blink) {
+        const isTurn = !pad.dead && pad.id === turnId;
+        const isNext = !pad.dead && pad.id === nid && pad.id !== turnId;
+        if (pad.dead) ctx.globalAlpha = 0.22;
+        if (isTurn && pblink) {
           ctx.fillStyle = '#fff';
           ctx.globalAlpha = 0.35;
           ctx.fillRect(sx(pad.x) - 4, sy(pad.y) - 4, sw(pad.width) + 8, sh(pad.height) + 8);
-          ctx.globalAlpha = 1;
+          ctx.globalAlpha = pad.dead ? 0.22 : 1;
         }
         ctx.fillStyle = pad.color || '#e63946';
         ctx.fillRect(sx(pad.x), sy(pad.y), sw(pad.width), sh(pad.height));
         ctx.font = isTurn ? 'bold 12px Rajdhani' : '11px Rajdhani';
-        if (isTurn && blink) ctx.fillStyle = '#fff';
-        else if (isNext && blink) ctx.fillStyle = '#a7ffeb';
+        if (isTurn && pblink) ctx.fillStyle = '#fff';
+        else if (isNext && pblink) ctx.fillStyle = '#a7ffeb';
         else ctx.fillStyle = '#ddd';
         ctx.fillText(pad.name || '', sx(pad.x), sy(pad.y) - 3);
+        ctx.globalAlpha = 1;
       });
     } else {
       ctx.fillStyle = '#e63946';
@@ -1114,7 +1182,14 @@
     ctx.beginPath(); ctx.arc(sx(ball.x), sy(ball.y), sw(ball.radius), 0, Math.PI*2); ctx.fill();
     ctx.fillStyle = 'rgba(42,157,143,.55)';
     ctx.font = '12px Rajdhani';
-    ctx.fillText('LEVEL ' + (currentLevel+1) + (gameMode==='shared' ? (' · GILIRAN ' + currentTurnName()) : ''), 8, 14);
+    ctx.fillText('LEVEL ' + (currentLevel+1), 8, 14);
+    floatTexts.forEach(ft => {
+      ctx.globalAlpha = Math.max(0, ft.life / 50);
+      ctx.fillStyle = ft.color;
+      ctx.font = 'bold 13px Rajdhani';
+      ctx.fillText(ft.text, sx(ft.x), sy(ft.y));
+      ctx.globalAlpha = 1;
+    });
   }
 
   let accTime = 0;

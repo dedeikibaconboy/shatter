@@ -158,3 +158,26 @@ input[type="text"]:focus { border-color:var(--red); }
   border-color: #ffd700;
   box-shadow: 0 0 24px rgba(255,215,0,.25);
 }
+
+.turn-banner {
+  margin-top: 4px;
+  font-family: Orbitron, sans-serif;
+  font-size: 13px;
+  letter-spacing: 1px;
+  color: #b8f2e6;
+  text-shadow: 0 0 8px rgba(42,157,143,.8);
+}
+.turn-banner.mine { color: #fff; text-shadow: 0 0 10px #e63946, 0 0 16px #2a9d8f; }
+.splash-soft {
+  align-items: flex-start;
+  padding-top: 64px;
+  background: transparent;
+}
+.splash-soft .splash-card {
+  max-width: min(420px, 92%);
+  padding: 12px 14px;
+  background: rgba(12,12,12,.78);
+}
+#level-up.overlay, #game-over.overlay.waiting {
+  background: rgba(0,0,0,.35);
+}
