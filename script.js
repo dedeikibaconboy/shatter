@@ -84,9 +84,6 @@
   let lastFxSeq = 0;
   let pendingStartCmd = false;
   let readyUntil = 0;
-  let readySeq = 0;
-  let lastReadySeq = 0;
-  let matchEnded = false;
   const SITE_URL = 'https://shatter.silverhawk.web.id';
 
   let fbDb = null, fbReady = false;
@@ -174,7 +171,8 @@
     if (ev.type === 'paddle') sfxPaddle();
     else if (ev.type === 'wall') sfxWall();
     else if (ev.type === 'brick') {
-      burstBrick(ev.x || VW/2, ev.y || 80, ev.color || '#e63946', !!ev.dead, { points: ev.points, maxHp: ev.maxHp });
+      sfxBrick({ points: ev.points, maxHp: ev.maxHp });
+      if (ev.x != null) spawnParticles(ev.x, ev.y, ev.color || '#e63946');
     } else if (ev.type === 'life') {
       showLifeLostFX(ev.who, ev.name, ev.reason, ev.lives);
       if (ev.who === myNetId && ev.lives != null) {
@@ -203,16 +201,7 @@
     if (typeof data.level === 'number' && data.level !== currentLevel && !isHost) {
       currentLevel = data.level;
     }
-    if (!isHost) {
-      const seq = Number(data.readySeq || 0);
-      if (seq && seq !== lastReadySeq) {
-        lastReadySeq = seq;
-        readyUntil = Date.now() + 3000;
-      } else if (!seq) {
-        readyUntil = 0;
-        lastReadySeq = 0;
-      }
-    }
+    if (data.readyUntil != null) readyUntil = Number(data.readyUntil) || 0;
     if (!isHost && Array.isArray(data.fx)) {
       data.fx.forEach((ev) => {
         if (!ev || ev.id == null || ev.id <= lastFxSeq) return;
@@ -337,27 +326,7 @@
         isRunning = true;
       }
       if (v.restart && matchStarted) {
-        matchEnded = false;
         startMultiplayerMatch();
-      }
-      if (v.gameOver && !matchEnded) {
-        if (Array.isArray(v.results) && v.results.length) {
-          v.results.forEach((s) => {
-            const r = roster.find((p) => p.id === s.id);
-            if (r) {
-              r.score = s.score;
-              r.lives = s.lives;
-              r.finished = !!s.finished;
-              if (s.name) r.name = s.name;
-            } else {
-              roster.push({
-                id: s.id, name: s.name || 'Player', score: s.score || 0,
-                lives: s.lives || 0, finished: true, host: !!s.host
-              });
-            }
-          });
-        }
-        endMatch();
       }
     });
     fbCmdUnsub = () => base.child('cmd').off('value', cmdH);
@@ -443,7 +412,7 @@
     const d = document.createElement('div'); d.textContent = t; return d.innerHTML;
   }
   function hideOverlays(except) {
-    ['pause-overlay', 'level-up', 'game-over', 'life-splash', 'guide-overlay', 'credits-overlay'].forEach((id) => {
+    ['pause-overlay', 'level-up', 'game-over', 'life-splash'].forEach((id) => {
       if (except && id === except) return;
       const el = document.getElementById(id);
       if (el) el.classList.add('hidden');
@@ -516,69 +485,31 @@
   }
 
   const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-  const masterGain = audioCtx.createGain();
-  masterGain.gain.value = 1;
-  masterGain.connect(audioCtx.destination);
-  function unlockAudio() {
+  function playTone(freq, duration, type = 'square', volume = 0.07) {
     if (audioCtx.state === 'suspended') audioCtx.resume();
-  }
-  document.addEventListener('pointerdown', unlockAudio, { passive: true });
-  document.addEventListener('keydown', unlockAudio);
-  function playTone(freq, duration, type = 'square', volume = 0.22) {
-    unlockAudio();
     try {
       const osc = audioCtx.createOscillator();
       const gain = audioCtx.createGain();
-      const filter = audioCtx.createBiquadFilter();
-      filter.type = 'lowpass';
-      filter.frequency.value = 4800;
-      osc.type = type;
-      osc.frequency.value = freq;
-      const v = Math.min(0.5, volume);
-      gain.gain.setValueAtTime(v, audioCtx.currentTime);
-      gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + Math.max(0.04, duration));
-      osc.connect(filter);
-      filter.connect(gain);
-      gain.connect(masterGain);
-      osc.start();
-      osc.stop(audioCtx.currentTime + duration);
+      osc.type = type; osc.frequency.value = freq;
+      gain.gain.setValueAtTime(volume, audioCtx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + duration);
+      osc.connect(gain); gain.connect(audioCtx.destination);
+      osc.start(); osc.stop(audioCtx.currentTime + duration);
     } catch (e) {}
   }
-  const sfxPaddle = () => playTone(220, 0.09, 'square', 0.32);
+  const sfxPaddle = () => playTone(220, 0.06);
   function sfxBrick(brick) {
     const hard = Number((brick && (brick.maxHp || brick.points)) || 10);
     if (hard >= 30) {
-      [392, 523, 659, 784].forEach((f, i) => setTimeout(() => playTone(f, 0.18, i ? 'triangle' : 'square', 0.28 + i * 0.04), i * 55));
+      [392, 523, 659, 784].forEach((f, i) => setTimeout(() => playTone(f, 0.16, i ? 'triangle' : 'square', 0.07 + i * 0.015), i * 55));
     } else if (hard >= 20) {
-      [440, 554, 659].forEach((f, i) => setTimeout(() => playTone(f, 0.14, 'triangle', 0.28), i * 45));
+      [440, 554, 659].forEach((f, i) => setTimeout(() => playTone(f, 0.12, 'triangle', 0.07), i * 45));
     } else {
-      playTone(480, 0.1, 'triangle', 0.3);
-      playTone(720, 0.08, 'sine', 0.16);
+      playTone(480, 0.07, 'triangle', 0.08);
     }
   }
-  const sfxWall = () => playTone(180, 0.08, 'sine', 0.24);
-  const sfxLife = () => playTone(120, 0.28, 'sawtooth', 0.3);
-  let shakeAmt = 0, flashAmt = 0;
-  function burstBrick(x, y, color, destroyed, brick) {
-    sfxBrick(brick || { points: destroyed ? 20 : 10 });
-    const n = destroyed ? 18 : 10;
-    for (let i = 0; i < n; i++) {
-      const ang = (Math.PI * 2 * i) / n + Math.random() * 0.4;
-      const spd = (destroyed ? 3.2 : 2) + Math.random() * 3;
-      particles.push({
-        x, y,
-        dx: Math.cos(ang) * spd,
-        dy: Math.sin(ang) * spd,
-        life: destroyed ? 30 : 18,
-        maxLife: destroyed ? 30 : 18,
-        color: color || '#e63946',
-        size: destroyed ? 3.4 : 2.2
-      });
-    }
-    shakeAmt = destroyed ? 7 : 3.5;
-    flashAmt = destroyed ? 10 : 5;
-    if (destroyed) spawnFloat(x, y, '+', color || '#ffd166');
-  }
+  const sfxWall = () => playTone(180, 0.05, 'sine', 0.04);
+  const sfxLife = () => playTone(120, 0.2, 'sawtooth', 0.08);
 
   async function loadData() {
     try {
@@ -650,7 +581,7 @@
   }
   function refreshWaitBoard() {
     if (!gameOverOverlay || gameOverOverlay.classList.contains('hidden')) return;
-    if (!isMultiplayer || !finalResults) return;
+    if (!isMultiplayer) return;
     finalResults.innerHTML = roster.map((p) => {
       const heart = '♥'.repeat(Math.max(0, Number(p.lives || 0)));
       const mark = p.finished ? '✓' : '▶';
@@ -854,8 +785,16 @@
     paddle.y = VH - 28;
     ball.radius = 7;
     ball.speed = fairBallSpeed();
-    if (gameMode === 'shared') initSharedPaddles(true);
-    serveBallFromTop(true);
+    if (gameMode === 'shared') {
+      initSharedPaddles(true);
+      serveBallFromTop(true);
+    } else {
+      ball.x = VW / 2;
+      ball.y = paddle.y - ball.radius - 3;
+      const angle = (Math.random() * 0.5 - 0.25) - Math.PI / 2;
+      ball.dx = Math.cos(angle) * ball.speed;
+      ball.dy = Math.sin(angle) * ball.speed;
+    }
   }
 
   function paddleScaleByAlive(n) {
@@ -910,18 +849,15 @@
     ball.dy = 0;
     ball.speed = fairBallSpeed();
     if (startCountdown !== false) {
-      readySeq += 1;
       readyUntil = Date.now() + 3000;
       emitNetFx('ready');
       broadcastWorld(true);
     } else {
-      readySeq = 0;
       readyUntil = 0;
     }
   }
   function launchReadyBall() {
     readyUntil = 0;
-    readySeq = 0;
     ball.speed = fairBallSpeed();
     const jitter = Math.random() * 0.5 - 0.25;
     ball.dx = Math.sin(jitter) * ball.speed;
@@ -1054,7 +990,6 @@
       turnId,
       level: currentLevel,
       readyUntil,
-      readySeq,
       bricks: packBricks(bricks),
       pending: packBricks(pendingBricks),
       fx: netFx
@@ -1079,19 +1014,11 @@
     const me = roster.find(p => p.id === myNetId);
     if (me) { me.score = score; me.lives = lives; }
     renderLiveScores();
-    refreshEndMatchBtn();
     if (isMultiplayer) writeMyPlayer({ score, lives, finished: lives <= 0 });
-  }
-  function refreshEndMatchBtn() {
-    const btn = document.getElementById('btn-end-match');
-    if (!btn) return;
-    const alive = alivePlayers();
-    const show = !matchEnded && gameMode === 'shared' && isRunning && alive.length === 1 && alive[0].id === myNetId;
-    btn.classList.toggle('hidden', !show);
   }
 
   function spawnParticles(x, y, color) {
-    const n = IS_MOBILE ? 8 : 12;
+    const n = IS_MOBILE ? 4 : 8;
     for (let i = 0; i < n; i++) {
       particles.push({ x, y, dx:(Math.random()-.5)*5, dy:(Math.random()-.5)*5, life:20, maxLife:20, color, size:2 });
     }
@@ -1125,8 +1052,7 @@
 
   let worldTick = 0;
   function update(dt) {
-    if (isPaused) return;
-    if (!isRunning && !matchEnded) return;
+    if (!isRunning || isPaused) return;
     const step = 1;
     const shared = gameMode === 'shared';
     const myPad = shared ? paddles.find(p => p.id === myNetId) : paddle;
@@ -1152,8 +1078,7 @@
         }
       }
     }
-    if (shared && paddles.some(p => p.id === 'cpu') && !matchEnded) moveCpu();
-    if (matchEnded || !isRunning) return;
+    if (shared && paddles.some(p => p.id === 'cpu')) moveCpu();
 
     const simulate = !shared || !isMultiplayer || isHost;
     if (readyUntil && Date.now() < readyUntil) {
@@ -1176,16 +1101,13 @@
       if (ball.y - ball.radius > VH) {
         if (shared) {
           applyLifeLoss(turnId || myNetId, 'Bola jatuh · giliran ' + currentTurnName());
-          const still = alivePlayers();
-          if (still.length) setTurn(still.length === 1 ? still[0].id : nextTurnAfter(turnId));
-          refreshEndMatchBtn();
+          setTurn(nextTurnAfter(turnId));
+          if (alivePlayers().length <= 1) { endMatch(); return; }
           serveBallFromTop(true);
         } else {
-          lives--;
-          showLifeLostFX(myNetId, myName, 'Bola jatuh', lives);
-          updateHUD();
-          if (lives <= 0) { endMatch(); return; }
-          serveBallFromTop(true);
+          lives--; updateHUD(); sfxLife();
+          if (lives <= 0) { playerFinished(); return; }
+          resetBallAndPaddle();
         }
         return;
       }
@@ -1213,7 +1135,7 @@
             ball.y = pad.y - ball.radius - 1;
             scoringOwner = turnId;
             consumedHit = true;
-            refreshEndMatchBtn();
+            if (alivePlayers().length <= 1) { endMatch(); return; }
             return;
           }
           const hitPos = (ball.x - (pad.x + pad.width/2)) / (pad.width/2);
@@ -1250,15 +1172,14 @@
           if (prevX < brick.x || prevX > brick.x + brick.width) ball.dx = -ball.dx;
           else ball.dy = -ball.dy;
           const owner = shared ? (scoringOwner || turnId || lastHitter || myNetId) : myNetId;
-          brick.hp--;
-          burstBrick(brick.x + brick.width/2, brick.y + brick.height/2, brick.color, brick.hp <= 0, brick);
+          brick.hp--; sfxBrick(brick);
+          spawnParticles(brick.x + brick.width/2, brick.y + brick.height/2, brick.color);
           emitNetFx('brick', {
             x: brick.x + brick.width / 2,
             y: brick.y + brick.height / 2,
             color: brick.color,
             points: brick.points,
-            maxHp: brick.maxHp,
-            dead: brick.hp <= 0
+            maxHp: brick.maxHp
           });
           if (brick.hp <= 0) {
             const rp = roster.find(r => r.id === owner);
@@ -1300,12 +1221,6 @@
   }
 
   function draw() {
-    ctx.save();
-    if (shakeAmt) {
-      ctx.translate((Math.random() - 0.5) * shakeAmt * 2, (Math.random() - 0.5) * shakeAmt * 2);
-      shakeAmt *= 0.72;
-      if (shakeAmt < 0.35) shakeAmt = 0;
-    }
     ctx.fillStyle = '#0c0c0c';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
     bricks.forEach(brick => {
@@ -1346,15 +1261,6 @@
       ctx.fillStyle = '#e63946';
       ctx.fillRect(sx(paddle.x), sy(paddle.y), sw(paddle.width), sh(paddle.height));
     }
-    particles.forEach((pt) => {
-      ctx.globalAlpha = Math.max(0, pt.life / (pt.maxLife || 20));
-      ctx.fillStyle = pt.color || '#fff';
-      const r = Math.max(2, sw(pt.size || 2.4));
-      ctx.beginPath();
-      ctx.arc(sx(pt.x), sy(pt.y), r, 0, Math.PI * 2);
-      ctx.fill();
-    });
-    ctx.globalAlpha = 1;
     ctx.fillStyle = '#2a9d8f';
     ctx.beginPath(); ctx.arc(sx(ball.x), sy(ball.y), sw(ball.radius), 0, Math.PI*2); ctx.fill();
     ctx.fillStyle = 'rgba(42,157,143,.55)';
@@ -1367,30 +1273,19 @@
       ctx.fillText(ft.text, sx(ft.x), sy(ft.y));
       ctx.globalAlpha = 1;
     });
-    if (readyUntil && Date.now() < readyUntil) {
-      const left = readyUntil - Date.now();
-      const sec = Math.max(1, Math.ceil(left / 1000));
-      const pulse = 0.85 + 0.15 * Math.sin(Date.now() / 120);
-      ctx.save();
-      ctx.fillStyle = 'rgba(0,0,0,.45)';
-      ctx.fillRect(sx(30), sy(VH * 0.44), sw(340), sh(88));
+    if (gameMode === 'shared' && readyUntil && Date.now() < readyUntil) {
+      const sec = Math.max(1, Math.ceil((readyUntil - Date.now()) / 1000));
+      ctx.fillStyle = 'rgba(0,0,0,.35)';
+      ctx.fillRect(sx(40), sy(VH * 0.46), sw(320), sh(70));
       ctx.fillStyle = '#b8f2e6';
+      ctx.font = 'bold 22px Orbitron, sans-serif';
       ctx.textAlign = 'center';
-      ctx.font = 'bold 24px Orbitron, sans-serif';
-      ctx.globalAlpha = pulse;
-      ctx.fillText('GET READY', sx(VW / 2), sy(VH * 0.50));
-      ctx.globalAlpha = 1;
+      ctx.fillText('GET READY', sx(VW / 2), sy(VH * 0.51));
       ctx.fillStyle = '#fff';
-      ctx.font = 'bold 34px Orbitron, sans-serif';
+      ctx.font = 'bold 28px Orbitron, sans-serif';
       ctx.fillText(String(sec), sx(VW / 2), sy(VH * 0.56));
-      ctx.restore();
+      ctx.textAlign = 'left';
     }
-    if (flashAmt) {
-      ctx.fillStyle = 'rgba(255,255,255,' + (0.10 * flashAmt / 10) + ')';
-      ctx.fillRect(0, 0, canvas.width, canvas.height);
-      flashAmt--;
-    }
-    ctx.restore();
   }
 
   let accTime = 0;
@@ -1426,7 +1321,6 @@
       roster = [];
       myNameHud.textContent = myName;
     }
-    matchEnded = false;
     bumpStat('plays');
     showScreen('game');
     hideOverlays();
@@ -1451,7 +1345,6 @@
     netFx = []; lastFxSeq = 0;
     if (isHost) fxSeq = 0;
     pendingStartCmd = false;
-    matchEnded = false;
     if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
     roster.forEach(p => { p.score = 0; p.finished = false; p.lives = settings.lives; });
     if (gameMode === 'shared') {
@@ -1511,71 +1404,31 @@
     const top = list[0] || { name: myName, score };
     return `${top.name} juara Monmon Shatter — ${top.score || 0} poin!\nMain bareng di ${SITE_URL}`;
   }
-  function cheerForRank(rank, total) {
-    if (rank === 1) return 'Hebat! Kamu pecahkan semua lawan.';
-    if (rank === 2) return 'Nyaris juara. Tetap semangat, revanse menunggu!';
-    if (rank === 3) return 'Podium sudah di tangan. Ayo naik lagi!';
-    if (rank === total) return 'Belum beruntung sekarang. Kamu bisa lebih baik di ronde berikutnya!';
-    return 'Bagus sudah bertahan. Jangan menyerah, shatter lagi!';
-  }
   function endMatch() {
-    if (matchEnded) return;
-    matchEnded = true;
     isRunning = false;
     readyUntil = 0;
     hideOverlays('game-over');
-    const list = (roster.length ? roster : [{id: myNetId, name: myName, score, lives}]).slice().sort((a,b)=>(b.score||0)-(a.score||0));
+    const list = (roster.length ? roster : [{name: myName, score, lives}]).slice().sort((a,b)=>(b.score||0)-(a.score||0));
     const top = list[0] || { name: myName, score };
-    const myIndex = Math.max(0, list.findIndex((p) => p.id === myNetId));
-    const myRank = list.length ? myIndex + 1 : 1;
-    const iWon = myRank === 1;
-    const kicker = document.getElementById('champ-kicker');
-    const cheer = document.getElementById('cheer-msg');
-    if (kicker) kicker.textContent = iWon ? 'KAMU JUARA' : 'HASIL PERTANDINGAN';
-    goTitle.textContent = iWon ? 'JUARA 1' : ('Juara: ' + (top.name || 'Pemain'));
+    goTitle.textContent = (top.name || 'Pemain') + ' JUARA';
     gameOverOverlay.classList.add('final-shot');
-    gameOverOverlay.classList.remove('loser-view', 'playable');
     const cele = document.getElementById('celebration');
     const podium = document.getElementById('podium');
-    if (cele) {
-      cele.classList.remove('hidden');
-      cele.textContent = '🏆🎉🔥';
-    }
-    const endBtn = document.getElementById('btn-end-match');
-    if (endBtn) endBtn.classList.add('hidden');
-    if (cheer) {
-      cheer.textContent = iWon
-        ? ('Selamat ' + myName + '! Skor ' + (list[myIndex] && list[myIndex].score || score) + ' poin.')
-        : ('Kamu urutan ke-' + myRank + ' dari ' + list.length + '. ' + cheerForRank(myRank, list.length));
-    }
+    if (cele) { cele.classList.remove('hidden'); cele.textContent = '🏆🎉🔥'; }
     const medals = ['🥇','🥈','🥉'];
     const cls = ['gold','silver','bronze'];
     if (podium) podium.innerHTML = list.map((p,i) =>
-      `<div class="podium-row ${cls[i]||''}${p.id===myNetId?' you':''}"><span><span class="rank">${medals[i]||(i+1)+'.'}</span>${escapeHtml(p.name)}${p.id===myNetId?' (Kamu)':''}</span><strong>${p.score||0} poin</strong></div>`
+      `<div class="podium-row ${cls[i]||''}"><span><span class="rank">${medals[i]||(i+1)+'.'}</span>${escapeHtml(p.name)}</span><strong>${p.score||0} poin · ${'♥'.repeat(Math.max(0, p.lives||0)) || 'habis'}</strong></div>`
     ).join('');
-    if (finalResults) finalResults.innerHTML = '';
+    finalResults.innerHTML = `<div class="winner">${escapeHtml(top.name)} · ${top.score||0} POIN</div>
+      <p>Level ${currentLevel+1} · ${list.length} pemain</p>`;
     window._lastShareText = shareResultText(list);
     try {
-      if (iWon) {
-        [392,523,659,784,1046,1318].forEach((f,i)=>setTimeout(()=>playTone(f,0.28,'triangle',0.34), i*110));
-        setTimeout(() => playTone(1568, 0.5, 'square', 0.32), 780);
-        setTimeout(() => playTone(1976, 0.4, 'triangle', 0.28), 980);
-      } else {
-        [392,494,587,784].forEach((f,i)=>setTimeout(()=>playTone(f,0.24,'triangle',0.28), i*140));
-        setTimeout(() => playTone(880, 0.4, 'sine', 0.26), 620);
-      }
+      [392,523,659,784,1046,1318].forEach((f,i)=>setTimeout(()=>playTone(f,0.22,'triangle',0.1), i*110));
+      setTimeout(() => playTone(1568, 0.45, 'square', 0.09), 780);
+      setTimeout(() => playTone(1976, 0.35, 'triangle', 0.07), 980);
     } catch(e) {}
     gameOverOverlay.classList.remove('hidden');
-    if (isMultiplayer && fbReady && fbDb && roomCode) {
-      fbDb.ref(fbRoomPath() + '/cmd').set({
-        gameOver: true,
-        t: Date.now(),
-        results: list.map((p) => ({
-          id: p.id, name: p.name, score: p.score || 0,
-          lives: p.lives || 0, finished: true, host: !!p.host
-        }))
-      }).catch(() => {});
-    }
   }
 
   function leaveAll() {
@@ -1694,45 +1547,6 @@
     leaveAll();
   };
   if (btnLevelLobby) btnLevelLobby.onclick = leaveAll;
-  document.addEventListener('click', (ev) => {
-    const t = ev.target && ev.target.closest ? ev.target.closest('button') : null;
-    if (!t || !t.id) return;
-    if (t.id === 'btn-guide') {
-      ev.preventDefault();
-      const el = document.getElementById('guide-overlay');
-      if (el) el.classList.remove('hidden');
-    }
-    if (t.id === 'btn-credits') {
-      ev.preventDefault();
-      const el = document.getElementById('credits-overlay');
-      if (el) el.classList.remove('hidden');
-    }
-    if (t.id === 'btn-guide-close') {
-      const el = document.getElementById('guide-overlay');
-      if (el) el.classList.add('hidden');
-    }
-    if (t.id === 'btn-credits-close') {
-      const el = document.getElementById('credits-overlay');
-      if (el) el.classList.add('hidden');
-    }
-  });
-  const guideOverlay = document.getElementById('guide-overlay');
-  const creditsOverlay = document.getElementById('credits-overlay');
-  const btnGuide = document.getElementById('btn-guide');
-  const btnCredits = document.getElementById('btn-credits');
-  if (btnGuide) btnGuide.onclick = () => { if (guideOverlay) guideOverlay.classList.remove('hidden'); };
-  if (btnCredits) btnCredits.onclick = () => { if (creditsOverlay) creditsOverlay.classList.remove('hidden'); };
-  const btnGuideClose = document.getElementById('btn-guide-close');
-  const btnCreditsClose = document.getElementById('btn-credits-close');
-  if (btnGuideClose) btnGuideClose.onclick = () => { if (guideOverlay) guideOverlay.classList.add('hidden'); };
-  if (btnCreditsClose) btnCreditsClose.onclick = () => { if (creditsOverlay) creditsOverlay.classList.add('hidden'); };
-  const btnEndMatch = document.getElementById('btn-end-match');
-  if (btnEndMatch) btnEndMatch.onclick = () => {
-    if (matchEnded) return;
-    const alive = alivePlayers();
-    if (!(gameMode === 'shared' && alive.length === 1 && alive[0].id === myNetId)) return;
-    endMatch();
-  };
   const btnShare = document.getElementById('btn-share');
   if (btnShare) btnShare.onclick = async () => {
     const text = window._lastShareText || ('Main Monmon Shatter di ' + SITE_URL);
