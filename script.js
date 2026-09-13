@@ -170,6 +170,31 @@
     }).catch(()=>{});
   }
 
+  function fbWritePlayer() {
+    if (!fbReady || !fbDb || !roomCode) return;
+    fbDb.ref(fbRoomPath() + '/players/' + myNetId).set({
+      id: myNetId, name: myName, host: !!isHost, score: 0, lives: 3, finished: false, t: Date.now()
+    }).catch(()=>{});
+  }
+  function fbWriteMeta() {
+    if (!fbReady || !fbDb || !roomCode) return;
+    fbDb.ref(fbRoomPath() + '/meta').set({
+      hostName: myName, hostId: myNetId,
+      requiresCode: !!roomRequiresCode,
+      allowGuestStart: !!allowGuestStart,
+      gameMode: gameMode,
+      status: 'waiting',
+      createdAt: roomBornAt || Date.now()
+    }).catch(()=>{});
+  }
+  function applyFbPlayers(val) {
+    if (!val) return;
+    const list = Object.keys(val).map(k => val[k]).filter(p => p && p.id);
+    if (!list.length) return;
+    list.forEach(p => upsertPlayer(p.id, p.name, !!p.host));
+    updatePlayersList();
+  }
+
   function fbStartRoomSync() {
     if (!fbReady || !fbDb || !roomCode) return;
     fbStop();
@@ -191,7 +216,11 @@
         }
       });
     });
-    fbPadUnsub = () => base.child('pads').off('value', padH);
+    const plH = base.child('players').on('value', (snap) => applyFbPlayers(snap.val()));
+    fbPadUnsub = () => {
+      base.child('pads').off('value', padH);
+      base.child('players').off('value', plH);
+    };
     const cmdH = base.child('cmd').on('value', (snap) => {
       const v = snap.val();
       if (!v) return;
@@ -214,7 +243,7 @@
       const timer = setTimeout(() => {
         cleanup();
         reject(new Error('timeout'));
-      }, 20000);
+      }, action === 'create' ? 28000 : 16000);
       function cleanup() {
         clearTimeout(timer);
         try { delete window[cb]; } catch(e) { window[cb] = undefined; }
@@ -235,7 +264,7 @@
     try {
       const params = new URLSearchParams(Object.assign({ action }, extra || {}));
       const ctrl = new AbortController();
-      const tmr = setTimeout(() => ctrl.abort(), 8000);
+      const tmr = setTimeout(() => ctrl.abort(), action === 'create' ? 15000 : 8000);
       const res = await fetch(base + '?' + params.toString(), { cache: 'no-store', signal: ctrl.signal });
       clearTimeout(tmr);
       const text = await res.text();
@@ -626,66 +655,70 @@
     roomBornAt = Date.now();
     roster = [{ id: myNetId, name: myName, score: 0, finished: false, host: true }];
 
+    const custom = roomRequiresCode ? (customCodeInput.value || '').trim().toUpperCase() : '';
+    const localId = custom || ('M' + Math.random().toString(36).slice(2, 6).toUpperCase());
+    roomCode = localId;
+
     showScreen('room');
-    displayRoomCode.textContent = '...';
-    roomStatusEl.textContent = 'Menyiapkan koneksi...';
+    displayRoomCode.textContent = localId;
+    copyCodeInput.value = localId;
+    roomStatusEl.textContent = 'Menyiapkan room ' + localId + '...';
     btnStartMatch.disabled = true;
     updatePlayersList();
+    setConnStatus();
 
-    const custom = roomRequiresCode ? (customCodeInput.value || '').trim().toUpperCase() : '';
-    if (custom) {
-      displayRoomCode.textContent = custom;
-      copyCodeInput.value = custom;
-    }
-
-    async function finishHostRoom(id, peerId) {
+    async function finishHostRoom(id) {
       roomCode = id;
       displayRoomCode.textContent = id;
       copyCodeInput.value = id;
       roomHint.textContent = roomRequiresCode
         ? 'Room privat. Copy kode lalu kirim ke teman.'
         : 'Room publik. Laptop lain akan melihat room ini.';
+      await fbInit();
+      await fbResetRoom();
+      fbWriteMeta();
+      fbWritePlayer();
+      startHeartbeat();
+      setConnStatus();
+      roomStatusEl.textContent = 'Menunggu pemain join... Kode: ' + id;
       try {
         const joined = await apiGet('joinplayer', {
           roomId: id, playerId: myNetId, name: myName, isHost: '1', code: id
         });
         if (joined && joined.roster) applySheetRoster(joined.roster);
-      } catch (e) {}
-      await fbInit();
-      await fbResetRoom();
-      startHeartbeat();
-      setConnStatus();
-      roomStatusEl.textContent = 'Menunggu pemain join...';
+        setConnStatus(true);
+      } catch (e) {
+        setConnStatus(false);
+      }
     }
 
     (async () => {
+      await fbInit();
+      setConnStatus();
+      roomStatusEl.textContent = 'Mendaftarkan room ke Google Sheet...';
       if (!apiBase()) {
-        roomStatusEl.textContent = 'Isi config.js dulu.';
+        await finishHostRoom(localId);
+        roomStatusEl.textContent = 'Sheet belum diisi. Room tetap jalan lewat Firebase. Kode: ' + localId;
         return;
       }
-      roomStatusEl.textContent = 'Mendaftarkan room...';
       try {
         const created = await apiGet('create', {
           hostName: myName,
           peerId: myPeerId || '-',
           requiresCode: roomRequiresCode ? '1' : '0',
           allowGuestStart: allowGuestStart ? '1' : '0',
-          customCode: custom,
-          gameMode: (document.querySelector('input[name="roomPlayMode"]:checked') || {value:'race'}).value
+          customCode: localId,
+          gameMode: gameMode
         });
         if (created && created.ok) {
-          await finishHostRoom(created.roomId);
+          await finishHostRoom(created.roomId || localId);
           return;
         }
         throw new Error((created && created.error) || 'gagal');
       } catch (err) {
-        const guess = custom || roomCode;
-        const recovered = guess ? await recoverRoom(guess) : null;
-        if (recovered) {
-          await finishHostRoom(recovered.roomId);
-          return;
-        }
-        roomStatusEl.textContent = 'Server Google sedang lambat. Jika guest sudah masuk room ini, klik Keluar lalu Join pakai kode yang sama. Atau buat room lagi.';
+        await finishHostRoom(localId);
+        roomStatusEl.textContent = 'Sheet lambat, room tetap aktif lewat Firebase. Bagikan kode ' + localId + ' ke teman.';
+        setConnStatus(false);
       }
     })();
 
@@ -718,14 +751,16 @@
     btnStartMatch.disabled = true;
 
     let peerId = roomId;
+    await fbInit();
     if (apiBase()) {
       try {
         const info = await apiGet('joininfo', { roomId, code: code || roomId });
-        if (!info.ok) { roomStatusEl.textContent = info.error || 'Gagal join'; return; }
-        peerId = info.peerId;
-        allowGuestStart = !!info.allowGuestStart;
-        if (info.gameMode) gameMode = info.gameMode;
-        roomHint.textContent = 'Masuk room ' + (info.hostName || 'host');
+        if (info && info.ok) {
+          peerId = info.peerId || roomId;
+          allowGuestStart = !!info.allowGuestStart;
+          if (info.gameMode) gameMode = info.gameMode;
+          roomHint.textContent = 'Masuk room ' + (info.hostName || 'host');
+        }
         const joined = await apiGet('joinplayer', {
           roomId: roomId,
           playerId: myNetId,
@@ -733,14 +768,17 @@
           isHost: '0',
           code: code || roomId
         });
-        if (!joined.ok) { roomStatusEl.textContent = joined.error || 'Gagal join'; return; }
-        if (joined.roster) applySheetRoster(joined.roster);
-        startHeartbeat();
+        if (joined && joined.ok && joined.roster) applySheetRoster(joined.roster);
+        setConnStatus(true);
       } catch (e) {
-        roomStatusEl.textContent = 'Gagal cek room. Deploy ulang script.';
-        return;
+        setConnStatus(false);
+        roomStatusEl.textContent = 'Sheet lambat, coba join lewat Firebase...';
       }
     }
+    fbWritePlayer();
+    startHeartbeat();
+    roomStatusEl.textContent = 'Masuk room ' + roomId + '. Menunggu host mulai.';
+    setConnStatus();
 
     const p = makePeer();
     p.on('open', () => bindConn(p.connect(peerId, { reliable: true }), false));
