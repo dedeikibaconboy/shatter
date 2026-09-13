@@ -79,6 +79,10 @@
   let lastTurnAnnounced = null;
   let heartbeatTimer = null;
   let lastFbWorldWrite = 0, lastFbPadWrite = 0, lastFbScoreWrite = 0;
+  let netFx = [];
+  let fxSeq = 0;
+  let lastFxSeq = 0;
+  let pendingStartCmd = false;
 
   let fbDb = null, fbReady = false;
   let fbWorldUnsub = null, fbPadUnsub = null, fbCmdUnsub = null, fbPlayerUnsub = null, fbLobbyUnsub = null;
@@ -154,6 +158,36 @@
     ]);
   }
 
+  function emitNetFx(type, extra) {
+    fxSeq += 1;
+    netFx.push(Object.assign({ id: fxSeq, type }, extra || {}));
+    if (netFx.length > 10) netFx = netFx.slice(-10);
+  }
+  function playNetFx(ev) {
+    if (!ev || !ev.type) return;
+    if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
+    if (ev.type === 'paddle') sfxPaddle();
+    else if (ev.type === 'wall') sfxWall();
+    else if (ev.type === 'brick') {
+      sfxBrick({ points: ev.points, maxHp: ev.maxHp });
+      if (ev.x != null) spawnParticles(ev.x, ev.y, ev.color || '#e63946');
+    } else if (ev.type === 'life') {
+      sfxLife();
+      if (ev.who === myNetId) {
+        lives = ev.lives != null ? ev.lives : lives;
+        showLifeSplash(ev.reason || 'Nyawa berkurang', lives > 0);
+        updateHUD();
+      } else if (ev.name) {
+        spawnFloat(VW / 2, VH / 2, ev.name + ' -1 nyawa', '#e63946');
+      }
+    } else if (ev.type === 'warn') {
+      playTone(200, 0.1, 'square', 0.06);
+      spawnFloat(ev.x || VW / 2, ev.y || VH - 40, ev.text || 'AWAS', '#ffd166');
+    } else if (ev.type === 'drruit') sfxDrruit();
+    else if (ev.type === 'score') {
+      spawnFloat(ev.x || 40, ev.y || 40, ev.text || '', ev.color || '#2a9d8f');
+    }
+  }
   function applyWorldState(data) {
     if (!data || !data.ball) return;
     ball.x = data.ball.x; ball.y = data.ball.y;
@@ -166,14 +200,25 @@
     if (typeof data.level === 'number' && data.level !== currentLevel && !isHost) {
       currentLevel = data.level;
     }
+    if (!isHost && Array.isArray(data.fx)) {
+      data.fx.forEach((ev) => {
+        if (!ev || ev.id == null || ev.id <= lastFxSeq) return;
+        lastFxSeq = ev.id;
+        playNetFx(ev);
+      });
+    }
   }
 
   function applyPlayersMap(val) {
     const map = val || {};
+    const prevMine = roster.find((r) => r.id === myNetId);
+    const prevLives = prevMine && prevMine.lives != null ? prevMine.lives : null;
     const list = Object.keys(map).map((id) => {
       const p = map[id] || {};
       const mine = roster.find((r) => r.id === id);
-      const keepLocal = isRunning && id === myNetId && mine;
+      const keepLocal = isRunning && mine && (
+        isHost || (id === myNetId && gameMode !== 'shared')
+      );
       return {
         id,
         name: p.name || 'Player',
@@ -183,12 +228,27 @@
         host: !!p.host
       };
     });
-    list.sort((a, b) => (b.host - a.host) || a.name.localeCompare(b.name));
+    list.sort((a, b) => (b.host - a.host) || String(a.name).localeCompare(String(b.name)));
     roster = list;
+    if (!isHost && gameMode === 'shared') {
+      const me = roster.find((r) => r.id === myNetId);
+      if (me) {
+        score = me.score;
+        lives = me.lives;
+        if (prevLives != null && me.lives < prevLives) {
+          showLifeSplash(me.lives > 0 ? 'Nyawa berkurang' : 'Kamu tereliminasi', me.lives > 0);
+          sfxLife();
+        }
+      }
+    }
     updatePlayersList();
     renderLiveScores();
     refreshWaitBoard();
     if (isMultiplayer && roster.length && roster.every((p) => p.finished)) endMatch();
+    if (pendingStartCmd && !isRunning && roster.length >= 2) {
+      matchStarted = true;
+      startMultiplayerMatch();
+    }
   }
 
   function fbStop() {
@@ -252,7 +312,8 @@
       const v = snap.val();
       if (!v || !v.t) return;
       if (v.t < roomBornAt - 1500) return;
-      if (v.start && !matchStarted && roster.length >= 2) {
+      if (v.start) pendingStartCmd = true;
+      if (v.start && !isRunning && roster.length >= 2) {
         matchStarted = true;
         startMultiplayerMatch();
       }
@@ -275,6 +336,12 @@
 
   function writeMyPlayer(extra) {
     if (!fbReady || !fbDb || !roomCode || !myNetId) return;
+    if (gameMode === 'shared' && !isHost) {
+      fbDb.ref(fbRoomPath() + '/players/' + myNetId).update({
+        name: myName, host: false, lastSeen: nowMs()
+      }).catch(() => {});
+      return;
+    }
     const now = nowMs();
     if (now - lastFbScoreWrite < 280 && !(extra && extra.finished)) return;
     lastFbScoreWrite = now;
@@ -287,6 +354,18 @@
       lastSeen: now
     }, extra || {});
     fbDb.ref(fbRoomPath() + '/players/' + myNetId).update(payload).catch(() => {});
+  }
+  function writePlayerState(playerId, extra) {
+    if (!isHost || !fbReady || !fbDb || !roomCode || !playerId) return;
+    const r = roster.find((p) => p.id === playerId) || {};
+    fbDb.ref(fbRoomPath() + '/players/' + playerId).update(Object.assign({
+      name: r.name || 'Player',
+      host: !!r.host,
+      score: r.score || 0,
+      lives: r.lives != null ? r.lives : 3,
+      finished: !!r.finished,
+      lastSeen: nowMs()
+    }, extra || {})).catch(() => {});
   }
 
   function writeLobbyMeta() {
@@ -789,9 +868,12 @@
     [180, 140, 110, 90, 70].forEach((f, i) => setTimeout(() => playTone(f, 0.18, 'sawtooth', 0.07), i * 70));
   }
 
+  let lastSplashAt = 0;
   function showLifeSplash(reason, autoHide) {
     const box = document.getElementById('life-splash');
     if (!box) return;
+    if (Date.now() - lastSplashAt < 500) return;
+    lastSplashAt = Date.now();
     document.getElementById('splash-title').textContent = autoHide ? 'NYAWA BERKURANG' : 'KAMU TERELIMINASI';
     document.getElementById('splash-sub').textContent = reason || '';
     document.getElementById('splash-hint').textContent = autoHide
@@ -828,35 +910,32 @@
     }
     updateHUD();
     sfxLife();
+    emitNetFx('life', {
+      who: playerId,
+      name: r.name,
+      lives: r.lives,
+      reason: reason || 'Nyawa berkurang'
+    });
+    writePlayerState(playerId, { lives: r.lives, finished: !!r.finished, score: r.score || 0 });
+    broadcastWorld(true);
   }
 
-  function broadcastWorld() {
+  function broadcastWorld(force) {
     if (gameMode !== 'shared') return;
     if (isMultiplayer && !isHost) return;
-    const payload = {
-      type: 'world',
+    if (!fbReady || !fbDb || !roomCode) return;
+    const now = Date.now();
+    if (!force && now - lastFbWorldWrite < 70) return;
+    lastFbWorldWrite = now;
+    fbDb.ref(fbRoomPath() + '/world').set({
       ball: { x: ball.x, y: ball.y, dx: ball.dx, dy: ball.dy, speed: ball.speed },
-      paddles: paddles.map(p => ({ id: p.id, x: p.x, y: p.y, slow: p.slow })),
       lastHitter,
       turnId,
-      bricks: bricks.map(b => ({ x:b.x,y:b.y,width:b.width,height:b.height,color:b.color,hp:b.hp,maxHp:b.maxHp,points:b.points })),
-      pending: pendingBricks.map(b => ({ x:b.x,y:b.y,width:b.width,height:b.height,color:b.color,hp:b.hp,maxHp:b.maxHp,points:b.points, backAt:b.backAt })),
-      roster
-    };
-    if (fbReady && fbDb && roomCode) {
-      const now = Date.now();
-      if (now - lastFbWorldWrite >= 120) {
-        lastFbWorldWrite = now;
-        fbDb.ref(fbRoomPath() + '/world').set({
-          ball: payload.ball,
-          lastHitter: payload.lastHitter,
-          turnId: payload.turnId,
-          level: currentLevel,
-          bricks: packBricks(bricks),
-          pending: packBricks(pendingBricks)
-        }).catch(()=>{});
-      }
-    }
+      level: currentLevel,
+      bricks: packBricks(bricks),
+      pending: packBricks(pendingBricks),
+      fx: netFx
+    }).catch(() => {});
   }
 
   function startLevel(idx) {
@@ -944,12 +1023,16 @@
     if (shared && paddles.some(p => p.id === 'cpu')) moveCpu();
 
     const simulate = !shared || !isMultiplayer || isHost;
+    if (!simulate) {
+      ball.x += ball.dx * step;
+      ball.y += ball.dy * step;
+    }
     if (simulate) {
       ball.x += ball.dx * step;
       ball.y += ball.dy * step;
-      if (ball.x - ball.radius < 0) { ball.x = ball.radius; ball.dx = Math.abs(ball.dx); sfxWall(); }
-      else if (ball.x + ball.radius > VW) { ball.x = VW - ball.radius; ball.dx = -Math.abs(ball.dx); sfxWall(); }
-      if (ball.y - ball.radius < 0) { ball.y = ball.radius; ball.dy = Math.abs(ball.dy); sfxWall(); }
+      if (ball.x - ball.radius < 0) { ball.x = ball.radius; ball.dx = Math.abs(ball.dx); sfxWall(); emitNetFx('wall'); }
+      else if (ball.x + ball.radius > VW) { ball.x = VW - ball.radius; ball.dx = -Math.abs(ball.dx); sfxWall(); emitNetFx('wall'); }
+      if (ball.y - ball.radius < 0) { ball.y = ball.radius; ball.dy = Math.abs(ball.dy); sfxWall(); emitNetFx('wall'); }
 
       if (ball.y - ball.radius > VH) {
         if (shared) {
@@ -985,6 +1068,12 @@
             if (warnHits[pad.id] === 1) {
               spawnFloat(pad.x + pad.width/2, pad.y - 16, 'AWAS GILIRAN ' + currentTurnName(), '#ffd166');
               playTone(200, 0.1, 'square', 0.06);
+              emitNetFx('warn', {
+                x: pad.x + pad.width / 2,
+                y: pad.y - 16,
+                text: 'AWAS GILIRAN ' + currentTurnName()
+              });
+              broadcastWorld(true);
             } else {
               applyLifeLoss(pad.id, 'Bukan giliranmu. Giliran ' + currentTurnName());
               initSharedPaddles(true);
@@ -999,12 +1088,14 @@
           ball.dy = Math.sin(angle) * ball.speed;
           ball.y = pad.y - ball.radius - 1;
           sfxPaddle();
+          emitNetFx('paddle');
           if (shared) {
             lastHitter = pad.id || myNetId;
             scoringOwner = turnId;
             pendingAdvance = true;
           }
           consumedHit = true;
+          broadcastWorld(true);
         }
       });
 
@@ -1013,6 +1104,7 @@
         if (now < pb.backAt) return true;
         bricks.push({ x:pb.x,y:pb.y,width:pb.width,height:pb.height,color:pb.color,hp:pb.maxHp||pb.hp||1,maxHp:pb.maxHp||1,points:pb.points });
         sfxDrruit();
+        emitNetFx('drruit');
         return false;
       });
 
@@ -1025,14 +1117,27 @@
           const owner = shared ? (scoringOwner || turnId || lastHitter || myNetId) : myNetId;
           brick.hp--; sfxBrick(brick);
           spawnParticles(brick.x + brick.width/2, brick.y + brick.height/2, brick.color);
+          emitNetFx('brick', {
+            x: brick.x + brick.width / 2,
+            y: brick.y + brick.height / 2,
+            color: brick.color,
+            points: brick.points,
+            maxHp: brick.maxHp
+          });
           if (brick.hp <= 0) {
             const rp = roster.find(r => r.id === owner);
             if (shared) {
               if (rp) rp.score += brick.points;
               if (owner === myNetId) score += brick.points;
+              writePlayerState(owner, { score: rp ? rp.score : brick.points });
               if (lastHitter && lastHitter !== turnId) {
                 pendingBricks.push(Object.assign({}, brick, { backAt: Date.now() + 2000 }));
                 spawnFloat(brick.x, brick.y, '+' + brick.points + ' → ' + currentTurnName(), '#2a9d8f');
+                emitNetFx('score', {
+                  x: brick.x, y: brick.y,
+                  text: '+' + brick.points + ' → ' + currentTurnName(),
+                  color: '#2a9d8f'
+                });
               }
             } else {
               score += brick.points;
@@ -1040,6 +1145,7 @@
             bricks.splice(i,1);
             updateHUD();
           } else brick.color = shadeColor(brick.color, -35);
+          broadcastWorld(true);
           break;
         }
       }
@@ -1169,6 +1275,10 @@
     myNameHud.textContent = roster.length ? roster.map(p => p.name).join(' vs ') : myName;
     score = 0; lives = settings.lives; currentLevel = 0;
     lastHitter = null; pendingBricks = [];
+    netFx = []; lastFxSeq = 0;
+    if (isHost) fxSeq = 0;
+    pendingStartCmd = false;
+    if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
     roster.forEach(p => { p.score = 0; p.finished = false; p.lives = settings.lives; });
     if (gameMode === 'shared') {
       turnId = roster[0] ? roster[0].id : myNetId;
