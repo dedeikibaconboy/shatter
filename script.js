@@ -84,6 +84,7 @@
   let lastFxSeq = 0;
   let pendingStartCmd = false;
   let readyUntil = 0;
+  let matchEnded = false;
   const SITE_URL = 'https://shatter.silverhawk.web.id';
 
   let fbDb = null, fbReady = false;
@@ -326,7 +327,27 @@
         isRunning = true;
       }
       if (v.restart && matchStarted) {
+        matchEnded = false;
         startMultiplayerMatch();
+      }
+      if (v.gameOver && !matchEnded) {
+        if (Array.isArray(v.results) && v.results.length) {
+          v.results.forEach((s) => {
+            const r = roster.find((p) => p.id === s.id);
+            if (r) {
+              r.score = s.score;
+              r.lives = s.lives;
+              r.finished = !!s.finished;
+              if (s.name) r.name = s.name;
+            } else {
+              roster.push({
+                id: s.id, name: s.name || 'Player', score: s.score || 0,
+                lives: s.lives || 0, finished: true, host: !!s.host
+              });
+            }
+          });
+        }
+        endMatch();
       }
     });
     fbCmdUnsub = () => base.child('cmd').off('value', cmdH);
@@ -1321,6 +1342,7 @@
       roster = [];
       myNameHud.textContent = myName;
     }
+    matchEnded = false;
     bumpStat('plays');
     showScreen('game');
     hideOverlays();
@@ -1345,6 +1367,7 @@
     netFx = []; lastFxSeq = 0;
     if (isHost) fxSeq = 0;
     pendingStartCmd = false;
+    matchEnded = false;
     if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
     roster.forEach(p => { p.score = 0; p.finished = false; p.lives = settings.lives; });
     if (gameMode === 'shared') {
@@ -1404,31 +1427,70 @@
     const top = list[0] || { name: myName, score };
     return `${top.name} juara Monmon Shatter — ${top.score || 0} poin!\nMain bareng di ${SITE_URL}`;
   }
+  function cheerForRank(rank, total) {
+    if (rank === 1) return 'Hebat! Kamu pecahkan semua lawan.';
+    if (rank === 2) return 'Nyaris juara. Tetap semangat, revanse menunggu!';
+    if (rank === 3) return 'Podium sudah di tangan. Ayo naik lagi!';
+    if (rank === total) return 'Belum beruntung sekarang. Kamu bisa lebih baik di ronde berikutnya!';
+    return 'Bagus sudah bertahan. Jangan menyerah, shatter lagi!';
+  }
   function endMatch() {
+    if (matchEnded) return;
+    matchEnded = true;
     isRunning = false;
     readyUntil = 0;
     hideOverlays('game-over');
-    const list = (roster.length ? roster : [{name: myName, score, lives}]).slice().sort((a,b)=>(b.score||0)-(a.score||0));
+    const list = (roster.length ? roster : [{id: myNetId, name: myName, score, lives}]).slice().sort((a,b)=>(b.score||0)-(a.score||0));
     const top = list[0] || { name: myName, score };
-    goTitle.textContent = (top.name || 'Pemain') + ' JUARA';
+    const myIndex = Math.max(0, list.findIndex((p) => p.id === myNetId));
+    const myRank = list.length ? myIndex + 1 : 1;
+    const iWon = myRank === 1;
+    const kicker = document.getElementById('champ-kicker');
+    const cheer = document.getElementById('cheer-msg');
+    if (kicker) kicker.textContent = iWon ? 'KAMU JUARA' : 'HASIL PERTANDINGAN';
+    goTitle.textContent = iWon ? 'JUARA 1' : ('Juara: ' + (top.name || 'Pemain'));
     gameOverOverlay.classList.add('final-shot');
+    gameOverOverlay.classList.toggle('loser-view', !iWon);
     const cele = document.getElementById('celebration');
     const podium = document.getElementById('podium');
-    if (cele) { cele.classList.remove('hidden'); cele.textContent = '🏆🎉🔥'; }
+    if (cele) {
+      cele.classList.remove('hidden');
+      cele.textContent = iWon ? '🏆🎉🔥' : '💪✨🔥';
+    }
+    if (cheer) {
+      cheer.textContent = iWon
+        ? ('Selamat ' + myName + '! Skor ' + (list[myIndex] && list[myIndex].score || score) + ' poin.')
+        : ('Kamu urutan ke-' + myRank + ' dari ' + list.length + '. ' + cheerForRank(myRank, list.length));
+    }
     const medals = ['🥇','🥈','🥉'];
     const cls = ['gold','silver','bronze'];
     if (podium) podium.innerHTML = list.map((p,i) =>
-      `<div class="podium-row ${cls[i]||''}"><span><span class="rank">${medals[i]||(i+1)+'.'}</span>${escapeHtml(p.name)}</span><strong>${p.score||0} poin · ${'♥'.repeat(Math.max(0, p.lives||0)) || 'habis'}</strong></div>`
+      `<div class="podium-row ${cls[i]||''}${p.id===myNetId?' you':''}"><span><span class="rank">${medals[i]||(i+1)+'.'}</span>${escapeHtml(p.name)}${p.id===myNetId?' (Kamu)':''}</span><strong>${p.score||0} poin</strong></div>`
     ).join('');
     finalResults.innerHTML = `<div class="winner">${escapeHtml(top.name)} · ${top.score||0} POIN</div>
       <p>Level ${currentLevel+1} · ${list.length} pemain</p>`;
     window._lastShareText = shareResultText(list);
     try {
-      [392,523,659,784,1046,1318].forEach((f,i)=>setTimeout(()=>playTone(f,0.22,'triangle',0.1), i*110));
-      setTimeout(() => playTone(1568, 0.45, 'square', 0.09), 780);
-      setTimeout(() => playTone(1976, 0.35, 'triangle', 0.07), 980);
+      if (iWon) {
+        [392,523,659,784,1046,1318].forEach((f,i)=>setTimeout(()=>playTone(f,0.22,'triangle',0.1), i*110));
+        setTimeout(() => playTone(1568, 0.45, 'square', 0.09), 780);
+        setTimeout(() => playTone(1976, 0.35, 'triangle', 0.07), 980);
+      } else {
+        [392,494,587,784].forEach((f,i)=>setTimeout(()=>playTone(f,0.2,'triangle',0.08), i*140));
+        setTimeout(() => playTone(880, 0.35, 'sine', 0.07), 620);
+      }
     } catch(e) {}
     gameOverOverlay.classList.remove('hidden');
+    if (isHost && isMultiplayer && fbReady && fbDb && roomCode) {
+      fbDb.ref(fbRoomPath() + '/cmd').set({
+        gameOver: true,
+        t: Date.now(),
+        results: list.map((p) => ({
+          id: p.id, name: p.name, score: p.score || 0,
+          lives: p.lives || 0, finished: true, host: !!p.host
+        }))
+      }).catch(() => {});
+    }
   }
 
   function leaveAll() {
